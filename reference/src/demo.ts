@@ -10,9 +10,10 @@ import { issueCredential, registerVoters, sign, type Credential } from './creden
 import { signingBytes, boardBytes, electionContext } from './codec.js';
 import { BulletinBoard } from './bulletin.js';
 import {
-  setupKeys, runElection, encryptSelection, auditSelection, singleTrusteeAttempt,
+  setupKeys, runElection, encryptSelection, singleTrusteeAttempt,
   type Transcript, type Voter, type BallotEntry, type Selection,
 } from './election.js';
+import { newSession, prepareBallot, challengeBallot, castBallot } from './session.js';
 import { verifyTranscript, type VerifyResult } from './verify.js';
 
 const line = (c = '─') => console.log(c.repeat(72));
@@ -81,12 +82,18 @@ const sneaky = singleTrusteeAttempt(t.ballots[0]!.selection.enc[0]!, keys.truste
 console.log(`   Trustee #1 alone tries to read a ballot value → ${sneaky === null ? '❌ FAILED' : `got ${sneaky}`}`);
 console.log('   ✅ No single trustee can read any ballot. Only per-candidate TOTALS are decrypted.\n');
 
-console.log('3) CAST-AS-INTENDED — a voter audits (spoils) a ballot to check their device:');
+console.log('3) CAST-OR-CHALLENGE (Benaloh) — audit one ballot, then cast a fresh one:');
 line();
-const audited = encryptSelection(t.publicKey, 2, K); // device claims to encrypt "Sushi"
-console.log(`   Honest device encrypted the chosen candidate?  ${auditSelection(t.publicKey, audited.selection, audited.randomness, 2) ? '✅ YES' : '❌ NO'}`);
-console.log(`   Would a device that secretly encrypted a DIFFERENT candidate pass?  ${auditSelection(t.publicKey, audited.selection, audited.randomness, 0) ? '🔴 YES' : '✅ NO'}`);
-console.log('   ✅ A spoiled ballot is discarded; a cheating device cannot predict an audit.\n');
+const session = newSession();
+const trial = prepareBallot(t.publicKey, 2, K); // device claims to encrypt "Sushi"
+console.log(`   Challenged ballot audits as the chosen candidate?  ${challengeBallot(session, t.publicKey, trial, 2) ? '✅ YES' : '❌ NO'}`);
+let castBlocked = false;
+try { castBallot(session, trial); } catch { castBlocked = true; }
+console.log(`   Casting the challenged (spoiled) ballot is blocked?  ${castBlocked ? '✅ YES' : '🔴 NO'}`);
+const lying = prepareBallot(t.publicKey, 0, K); // a device that secretly encrypted "Tacos"
+console.log(`   A device that secretly encrypted a DIFFERENT candidate passes the audit?  ${challengeBallot(newSession(), t.publicKey, lying, 2) ? '🔴 YES' : '✅ NO'}`);
+castBallot(session, prepareBallot(t.publicKey, 2, K)); // voter casts a FRESH, unrevealed ballot
+console.log('   ✅ A challenged ballot is permanently discarded; the voter casts a fresh ballot.\n');
 
 console.log('4) DOUBLE VOTE — voter-1 votes again with the same credential:');
 line();

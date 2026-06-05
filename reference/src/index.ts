@@ -8,4 +8,5 @@ export * from './credentials.js';
 export * from './codec.js';
 export * from './bulletin.js';
 export * from './election.js';
+export * from './session.js';
 export * from './verify.js';

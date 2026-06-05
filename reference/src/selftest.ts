@@ -14,6 +14,7 @@ import {
   setupKeys, runElection, encryptSelection, auditSelection, type Voter,
 } from './election.js';
 import { dkg, combineShares, verificationKeyAt } from './threshold.js';
+import { newSession, prepareBallot, challengeBallot, castBallot } from './session.js';
 import { verifyTranscript } from './verify.js';
 
 let pass = 0;
@@ -215,6 +216,22 @@ for (let trial = 0; trial < 40; trial++) {
     let decLess = -1; try { decLess = discreteLog(ct.b.subtract(Dless), 5); } catch { decLess = -1; }
     check(decLess !== Number(m), `${k - 1} of ${n} trustees do NOT recover the plaintext (trial ${trial})`);
   }
+}
+
+// 11. Cast-or-challenge (Benaloh) session: spoiled ballots can't be cast; audits catch a lying device.
+{
+  const K = 3;
+  const s = newSession();
+  const p = prepareBallot(h, 1, K);
+  check(challengeBallot(s, h, p, 1), 'challenge audits an honest ballot');
+  let blocked = false; try { castBallot(s, p); } catch { blocked = true; }
+  check(blocked, 'cannot cast a spoiled (challenged) ballot');
+  const p2 = prepareBallot(h, 1, K);
+  check(castBallot(s, p2) === p2.selection, 'a fresh ballot casts');
+  let dup = false; try { castBallot(s, p2); } catch { dup = true; }
+  check(dup, 'cannot cast the same ballot twice');
+  const lying = prepareBallot(h, 0, K); // device secretly encrypted candidate 0
+  check(!challengeBallot(newSession(), h, lying, 1), 'audit catches a device that encrypted a different candidate');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);
