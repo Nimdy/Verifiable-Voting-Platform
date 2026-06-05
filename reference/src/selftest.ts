@@ -15,6 +15,7 @@ import {
 } from './election.js';
 import { dkg, combineShares, verificationKeyAt } from './threshold.js';
 import { newSession, prepareBallot, challengeBallot, castBallot } from './session.js';
+import { transcriptToJSON, transcriptFromJSON } from './transcript-json.js';
 import { verifyTranscript } from './verify.js';
 
 let pass = 0;
@@ -232,6 +233,32 @@ for (let trial = 0; trial < 40; trial++) {
   check(dup, 'cannot cast the same ballot twice');
   const lying = prepareBallot(h, 0, K); // device secretly encrypted candidate 0
   check(!challengeBallot(newSession(), h, lying, 1), 'audit catches a device that encrypted a different candidate');
+}
+
+// 12. Transcript JSON round-trips and re-verifies from the published record alone;
+//     tampering the published file is caught; bad point encodings are rejected on parse.
+{
+  const keys = setupKeys(4, 2);
+  const roll = [issueCredential(), issueCredential(), issueCredential()];
+  const voters: Voter[] = roll.map((credential, i) => ({ credential, choice: i % 3 }));
+  const t = runElection('json', ['a', 'b', 'c'], voters, keys, roll.map((c) => c.pub));
+
+  const round = transcriptFromJSON(transcriptToJSON(t));
+  const r = verifyTranscript(round);
+  check(r.ok, 'round-tripped transcript verifies');
+  check(JSON.stringify(r.results) === JSON.stringify(t.results), 'round-tripped results match');
+
+  const obj = JSON.parse(transcriptToJSON(t));
+  obj.results[0] = obj.results[0] + 5; // tamper the published totals
+  let okTamper = true;
+  try { okTamper = verifyTranscript(transcriptFromJSON(JSON.stringify(obj))).ok; } catch { okTamper = false; }
+  check(okTamper === false, 'tampering the published results is caught');
+
+  const obj2 = JSON.parse(transcriptToJSON(t));
+  obj2.publicKey = 'zz'.repeat(32); // invalid point encoding
+  let parseThrew = false;
+  try { transcriptFromJSON(JSON.stringify(obj2)); } catch { parseThrew = true; }
+  check(parseThrew, 'a bad point encoding is rejected on parse');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);

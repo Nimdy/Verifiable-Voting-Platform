@@ -14,6 +14,8 @@ import {
   type Transcript, type Voter, type BallotEntry, type Selection,
 } from './election.js';
 import { newSession, prepareBallot, challengeBallot, castBallot } from './session.js';
+import { transcriptToJSON } from './transcript-json.js';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { verifyTranscript, type VerifyResult } from './verify.js';
 
 const line = (c = '─') => console.log(c.repeat(72));
@@ -120,7 +122,13 @@ line();
 const fewer = { ...t, decShares: t.decShares.slice(0, keys.threshold - 1) };
 report(`fewer than ${keys.threshold} trustees cannot produce a valid decryption`, verifyTranscript(fewer));
 
+// Publish the transcript so anyone can re-verify it from the public record alone.
+mkdirSync('out', { recursive: true });
+writeFileSync('out/transcript.json', transcriptToJSON(t));
+console.log('Public transcript written to reference/out/transcript.json — verify it yourself:');
+console.log('  npm run verify -- out/transcript.json\n');
+
 line('━');
 console.log('  Summary: the honest election verifies; every insider attack is caught.');
-console.log('  Eligibility · one-vote-per-credential · one-candidate-per-ballot · secrecy · verifiable tally.');
+console.log('  Eligibility · one-vote-per-credential · one-of-K · secrecy · k-of-n · cast-or-challenge · verifiable tally.');
 line('━');

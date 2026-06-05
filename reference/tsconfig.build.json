@@ -7,5 +7,5 @@
     "rootDir": "src"
   },
   "include": ["src"],
-  "exclude": ["src/demo.ts", "src/selftest.ts"]
+  "exclude": ["src/demo.ts", "src/selftest.ts", "src/verify-cli.ts"]
 }

@@ -15,6 +15,7 @@
   "scripts": {
     "demo": "tsx src/demo.ts",
     "selftest": "tsx src/selftest.ts",
+    "verify": "tsx src/verify-cli.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json"
   },

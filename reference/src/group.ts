@@ -6,7 +6,7 @@
 
 import { RistrettoPoint } from '@noble/curves/ed25519';
 import { sha512 } from '@noble/hashes/sha512';
-import { randomBytes, concatBytes, utf8ToBytes } from '@noble/hashes/utils';
+import { randomBytes, concatBytes, utf8ToBytes, bytesToHex } from '@noble/hashes/utils';
 
 /** An element of the ristretto255 group. */
 export type Point = typeof RistrettoPoint.BASE;
@@ -98,6 +98,12 @@ export function invMod(a: bigint, m: bigint = N): bigint {
   if (mod(a, m) === 0n) throw new Error('invMod: no inverse for 0');
   return modPow(mod(a, m), m - 2n, m);
 }
+
+/** Encode a group element as hex (canonical 32-byte ristretto encoding). */
+export const pointToHex = (p: Point): string => bytesToHex(p.toRawBytes());
+
+/** Parse a group element from hex, validating the encoding (throws on a bad point). */
+export const pointFromHex = (hex: string): Point => RistrettoPoint.fromHex(hex);
 
 /** Encode a scalar as 32 big-endian bytes (for canonical serialization). */
 export function scalarTo32(s: bigint): Uint8Array {

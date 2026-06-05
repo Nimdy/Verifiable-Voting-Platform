@@ -12,8 +12,9 @@ to **prove the thesis runs** and to serve as the executable spec the production 
 ```bash
 cd reference
 npm install
-npm run demo       # full election + four insider attacks, all caught
-npm run selftest   # 2000 randomized soundness trials
+npm run demo       # multi-candidate election + 8 insider attacks, all caught
+npm run selftest   # ~4,700 randomized soundness trials
+npm run verify -- out/transcript.json   # re-verify the published transcript from the file ALONE
 npm run typecheck
 ```
 
@@ -72,5 +73,7 @@ These are tracked on the [roadmap](../docs/ROADMAP.md) (M1/M3), not oversights:
 | `src/election.ts` | runs a multi-candidate election; encrypt/audit a selection |
 | `src/session.ts` | cast-or-challenge (Benaloh) voting session |
 | `src/verify.ts` | the independent verifier (always returns a verdict) |
+| `src/transcript-json.ts` | canonical JSON (de)serialization of a published transcript |
+| `src/verify-cli.ts` | standalone CLI: re-verify a transcript file from the public record alone |
 | `src/demo.ts` | end-to-end demo + seven insider attacks |
 | `src/selftest.ts` | randomized soundness tests (~4,500 trials) |
