@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.*
+.yarn/*
+
+# Build output / artifacts
+dist/
+build/
+out/
+*.tsbuildinfo
+coverage/
+.turbo/
+
+# Rust (for the future crates/ workspace)
+target/
+**/*.rs.bk
+
+# Python (for the future verifier / RLA tooling)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environment & secrets — NEVER commit keys, especially trustee key shares
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+trustee-shares/
+
+# Logs & temp
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.shared.json
+*.swp
+
+# Foundry (future contracts/)
+cache/
+broadcast/

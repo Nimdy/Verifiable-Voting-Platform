@@ -1,0 +1,845 @@
+{
+  "labels": [
+    {
+      "name": "type:epic",
+      "color": "6F42C1",
+      "description": "A large body of work spanning multiple issues, usually one per milestone"
+    },
+    {
+      "name": "type:feature",
+      "color": "0E8A16",
+      "description": "New end-user or operator-facing capability"
+    },
+    {
+      "name": "type:task",
+      "color": "1D76DB",
+      "description": "Concrete unit of engineering work"
+    },
+    {
+      "name": "type:bug",
+      "color": "D73A4A",
+      "description": "Defect: behavior diverges from spec or expectation"
+    },
+    {
+      "name": "type:security",
+      "color": "B60205",
+      "description": "Security-critical work: crypto, threat model, hardening, review"
+    },
+    {
+      "name": "type:docs",
+      "color": "0075CA",
+      "description": "Documentation, specs, ADRs, READMEs"
+    },
+    {
+      "name": "type:research",
+      "color": "FBCA04",
+      "description": "Investigation/spike to resolve an open question before building"
+    },
+    {
+      "name": "type:chore",
+      "color": "C5DEF5",
+      "description": "Tooling, build, repo hygiene, dependency and release plumbing"
+    },
+    {
+      "name": "area:crypto",
+      "color": "5319E7",
+      "description": "Cryptographic core: ElGamal, Chaum-Pedersen, DKG, Benaloh, nullifiers (vvp-crypto)"
+    },
+    {
+      "name": "area:kernel",
+      "color": "C2E0C6",
+      "description": "Protocol kernel, 5 ports, ElectionManifest, phase orchestrator"
+    },
+    {
+      "name": "area:bulletin-board",
+      "color": "BFD4F2",
+      "description": "BulletinBoard port and adapters (postgres-log, object-store, anchor-*)"
+    },
+    {
+      "name": "area:registrar",
+      "color": "D4C5F9",
+      "description": "Belenios-style credential issuance and identity separation"
+    },
+    {
+      "name": "area:voter-app",
+      "color": "FEF2C0",
+      "description": "Next.js cast-or-challenge voter client (WASM crypto)"
+    },
+    {
+      "name": "area:admin",
+      "color": "FAD8C7",
+      "description": "Operator/admin console and lifecycle control plane"
+    },
+    {
+      "name": "area:tally",
+      "color": "C7F0DB",
+      "description": "Homomorphic aggregation, threshold decryption, mixnet tallying"
+    },
+    {
+      "name": "area:verifier",
+      "color": "F9D0C4",
+      "description": "Independent Python verifier and ElectionGuard interop"
+    },
+    {
+      "name": "area:governance",
+      "color": "BFDADC",
+      "description": "Governance/settlement adapters: EIP-712 votes, voting-power, oSnap"
+    },
+    {
+      "name": "area:rla",
+      "color": "E99695",
+      "description": "Paper VVPAT and risk-limiting audit tooling (polling-place profile)"
+    },
+    {
+      "name": "area:infra",
+      "color": "D2DAE1",
+      "description": "Docker, monorepo, build, deployment plumbing"
+    },
+    {
+      "name": "area:ci",
+      "color": "EDEDED",
+      "description": "Continuous integration, conformance suites, test vectors, releases"
+    },
+    {
+      "name": "priority:P0",
+      "color": "B60205",
+      "description": "Blocker / critical path for the current milestone"
+    },
+    {
+      "name": "priority:P1",
+      "color": "D93F0B",
+      "description": "Important; should land within the milestone"
+    },
+    {
+      "name": "priority:P2",
+      "color": "FBCA04",
+      "description": "Nice-to-have; can slip to a later milestone"
+    },
+    {
+      "name": "good-first-issue",
+      "color": "7057FF",
+      "description": "Well-scoped, low-context entry point for new contributors"
+    },
+    {
+      "name": "blocked",
+      "color": "000000",
+      "description": "Cannot proceed until a dependency is resolved"
+    },
+    {
+      "name": "needs-design",
+      "color": "CC317C",
+      "description": "Requires a design decision or ADR before implementation"
+    }
+  ],
+  "milestones": [
+    {
+      "id": "M0",
+      "title": "Scoping, threat model, honest spec, and ADRs",
+      "description": "Lock the trust boundary and design invariants in writing BEFORE any new cryptographic claim is published, so every later milestone has a signed-off rubric to test against and no capability is ever oversold relative to the evidence."
+    },
+    {
+      "id": "M1",
+      "title": "Cryptographic core (Rust vvp-crypto) + independent Python verifier",
+      "description": "Reimplement and harden the proven Stage-1 primitives as a production-track Rust core compiled to WASM, add the missing real k-of-n Pedersen DKG and a proper Merlin/STROBE Fiat-Shamir transcript, and prove correctness by triple cross-verification (Rust core, independent Python verifier, open ElectionGuard verifier) so a single implementation bug cannot hide."
+    },
+    {
+      "id": "M2",
+      "title": "Protocol kernel, 5 typed ports, ElectionManifest, and BulletinBoard conformance suite",
+      "description": "Wrap the verified core in a small kernel with five typed ports and a declarative ElectionManifest, and prove the chain-pluggable seam works by running the identical protocol byte-for-byte across an in-memory board and the default Postgres transparency log under a shared conformance suite."
+    },
+    {
+      "id": "M3",
+      "title": "Registrar (Belenios separation) + cast-or-challenge voter app + k-of-n threshold tally",
+      "description": "Deliver the first complete, real, club-style E2E-V election (the 'society' profile, no chain) where eligibility is separated from casting, the voter can audit cast-as-intended, single-use is enforced by published nullifiers, and any third party can re-verify the whole election from the published transcript."
+    },
+    {
+      "id": "M4",
+      "title": "Paper VVPAT + risk-limiting audit (software-independence anchor; in-person only)",
+      "description": "Provide the ONLY profile that achieves software independence \u2014 the 'polling-place' profile \u2014 by adding voter-verified paper ballots of record and a mandatory risk-limiting audit, and prove it by catching a deliberately injected endpoint flip against the paper."
+    },
+    {
+      "id": "M5",
+      "title": "Governance / settlement adapters (the 'all types of voting' reuse)",
+      "description": "Reuse the same verified kernel for DAO/protocol governance via the 'governance' profile \u2014 gasless EIP-712 signed votes with pluggable voting-power strategies and optional trustless optimistic settlement \u2014 and prove a DAO-style proposal is independently re-derivable from its transcript."
+    },
+    {
+      "id": "M6",
+      "title": "Optional coercion-resistant tiers + blockchain anchor adapters + adversary lab",
+      "description": "Add the opt-in coercion-resistance tiers and the non-load-bearing chain-anchor adapters, and prove the chain is genuinely swappable by anchoring the same election to Postgres, IPFS, and a permissioned BFT chain in parallel with identical verification."
+    },
+    {
+      "id": "M7",
+      "title": "Independent security review, signed reproducible releases, and low-stakes pilot",
+      "description": "Subject the platform to external scrutiny and run a genuine real-world low-stakes pilot, then ship signed reproducible releases \u2014 establishing the public trust that is the whole point, without ever claiming binding-public-election suitability."
+    }
+  ],
+  "epics": [
+    {
+      "title": "Epic: M0 - Scoping, threat model, honest README and ADRs",
+      "milestone": "M0",
+      "description": "Establish the trust foundation before any crypto claims. Deliver a signed-off threat model covering every actor (endpoint, registrar, casting server, trustees, board, anchor validators, network, coercer), a per-profile SCOPE document, and the load-bearing ADRs (no SSN-rooted identity, chain non-load-bearing, no PoS authority, paper+RLA as the only software-independence anchor, nullifiers over TTL, independent verifier in a different language, ristretto255+exponential ElGamal per ElectionGuard 2.x, receipt-freeness). DoD: threat model signed off; no public cryptographic guarantees are claimed until this epic closes."
+    },
+    {
+      "title": "Epic: M1 - Cryptographic core (Rust vvp-crypto) + independent Python verifier",
+      "milestone": "M1",
+      "description": "Port the proven Stage-1 TypeScript PoC to an auditable Rust crate (vvp-crypto, curve25519-dalek/ristretto255, exponential ElGamal, disjunctive Chaum-Pedersen, Pedersen DKG, Benaloh, nullifiers, Merlin/STROBE Fiat-Shamir) compiled to WASM, plus an independent Python reference verifier written by a different track. DoD: a single transcript verifies under the Rust core AND the Python verifier AND the open ElectionGuard verifier."
+    },
+    {
+      "title": "Epic: M2 - Protocol kernel, 5 ports, ElectionManifest, bulletin-board conformance",
+      "milestone": "M2",
+      "description": "Define the small kernel, the five typed ports (IdentityProvider, AnonymityLayer, TallyingScheme, BulletinBoard, Auditor), the Zod ElectionManifest, and the XState phase orchestrator. Ship the default postgres-log BulletinBoard plus an in-memory adapter and a conformance test suite. DoD: the same protocol runs byte-identically on the in-memory and Postgres boards."
+    },
+    {
+      "title": "Epic: M3 - Registrar + cast-or-challenge voter app + threshold tally",
+      "milestone": "M3",
+      "description": "Deliver the society profile end to end: a Belenios-style registrar (identity separated from casting), a Next.js 15 cast-or-challenge voter app running the WASM crypto, a k-of-n Pedersen DKG threshold tally, and a published transcript. DoD: a club-style election runs and any third party verifies it from the published transcript alone."
+    },
+    {
+      "title": "Epic: M4 - Paper VVPAT + risk-limiting audit (software-independence anchor)",
+      "milestone": "M4",
+      "description": "Add the advanced, in-person-only polling-place profile: voter-verified paper ballots of record, chain-of-custody, and risk-limiting audit tooling (ballot-polling and comparison). DoD: an injected endpoint vote-flip is caught by the RLA against the paper record."
+    },
+    {
+      "title": "Epic: M5 - Governance and settlement adapters",
+      "milestone": "M5",
+      "description": "Deliver the governance profile reuse: gasless EIP-712 signed votes, pluggable voting-power strategies at a frozen snapshot, optional MACI private tier hook, and optional trustless optimistic settlement (oSnap/SafeSnap). DoD: a DAO-style proposal runs gasless and settles trustlessly, independently re-derivable from the transcript."
+    },
+    {
+      "title": "Epic: M6 - Coercion-resistant tiers, chain-anchor adapters, adversary lab",
+      "milestone": "M6",
+      "description": "Add optional coercion-resistance tiers (Selene, MACI/Semaphore, JCJ/Civitas), the anchor-evm/anchor-cosmos/anchor-bitcoin adapters that publish only signed Merkle roots, and an adversary lab demonstrating why the original concept fails. DoD: the same election anchors to Postgres + IPFS + a permissioned BFT chain in parallel with identical verification."
+    },
+    {
+      "title": "Epic: M7 - Independent security review, signed reproducible releases, low-stakes pilot",
+      "milestone": "M7",
+      "description": "Commission external cryptographic review and red-team, ship signed reproducible release builds, and run a real low-stakes pilot (a club or DAO, explicitly NOT a binding public election). DoD: external crypto review and red-team complete; a pilot election runs and is publicly verified."
+    }
+  ],
+  "issues": [
+    {
+      "title": "Author THREAT_MODEL.md covering every actor and trust boundary",
+      "milestone": "M0",
+      "labels": [
+        "type:docs",
+        "type:security",
+        "area:infra",
+        "priority:P0"
+      ],
+      "body": "## Description\nWrite `docs/THREAT_MODEL.md` enumerating every actor and trust boundary in the platform and what each can and cannot do. This is the foundation the rest of the project builds on; no cryptographic guarantee may be claimed publicly until it is signed off (per M0 DoD).\n\nActors to cover: voter endpoint (device/malware), registrar, casting server, trustees (k-of-n), bulletin board operator, anchor-chain validators, network/MITM, and the coercer/vote-buyer.\n\n## Acceptance criteria\n- [ ] Each actor has assumptions, capabilities, and the property that protects against it\n- [ ] Endpoint compromise explicitly named as the dominant remote-voting risk (cast-as-intended)\n- [ ] Coercion/vote-buying treated as a first-class threat with receipt-freeness as the answer\n- [ ] Per-profile residual risk table (governance / society / polling-place)\n- [ ] States plainly that remote/digital-only deployments do NOT achieve software independence\n- [ ] Reviewed and signed off (recorded approval in the PR)\n\n## Dependencies\nNone. Blocks all M1+ crypto claims."
+    },
+    {
+      "title": "Author SCOPE.md mapping each E2E-V guarantee to its primitive, per profile",
+      "milestone": "M0",
+      "labels": [
+        "type:docs",
+        "area:infra",
+        "priority:P0"
+      ],
+      "body": "## Description\nWrite `docs/SCOPE.md` that turns the README scope table into a maintained reference: each E2E-V guarantee (cast-as-intended, recorded-as-cast, counted-as-recorded) maps to the specific mechanism that delivers it, and each deployment profile (governance / society / polling-place) states honestly what it does and does not provide.\n\n## Acceptance criteria\n- [ ] Three guarantees each linked to their named primitive (Benaloh, tracker+inclusion proof, homomorphic tally + threshold decryption + independent verifier)\n- [ ] Explicit non-goal: NOT for binding government/public elections, with the NASEM/Park-et-al/Voatz citations\n- [ ] Per-profile capability matrix consistent with README\n- [ ] Receipt-freeness stated as an invariant for the strong tiers\n\n## Dependencies\nShares context with the THREAT_MODEL.md issue; can proceed in parallel."
+    },
+    {
+      "title": "ADR: Never derive identity tokens from SSN or any durable government ID",
+      "milestone": "M0",
+      "labels": [
+        "type:docs",
+        "type:security",
+        "area:registrar",
+        "priority:P0"
+      ],
+      "body": "## Description\nWrite `docs/ADRs/0001-no-ssn-rooted-identity.md`. Identity proofing stays off-ledger; the voting layer only ever sees an unlinkable, fresh per-election credential (>=128-bit) and an is-eligible attestation. This directly replaces the original concept's SSN-rooted `SST`/`VET`.\n\n## Acceptance criteria\n- [ ] Context: why SSN/durable IDs are a surveillance honeypot and non-revocable\n- [ ] Decision: off-ledger proofing only; fresh per-election credential; no durable identifier crosses the seam\n- [ ] Consequences and the registrar obligations that follow\n- [ ] Cross-links the original-concept mapping table in the README\n\n## Dependencies\nInforms the M3 registrar design."
+    },
+    {
+      "title": "ADR: The blockchain is non-load-bearing (anchor signed Merkle roots only)",
+      "milestone": "M0",
+      "labels": [
+        "type:docs",
+        "area:bulletin-board",
+        "priority:P0"
+      ],
+      "body": "## Description\nWrite `docs/ADRs/0002-chain-non-load-bearing.md`. The default bulletin board is a Postgres transparency log with no chain. Any anchor adapter writes ONLY a ~32-byte signed Merkle root for tamper-evidence/timestamping; encrypted ballots NEVER go on-chain.\n\n## Acceptance criteria\n- [ ] Decision: ballots never on-chain; only signed roots anchored, behind the `AnchorTarget` sub-interface\n- [ ] Rationale cites Park et al. (a plain authenticated log does the bulletin-board job better)\n- [ ] Consequences for the BulletinBoard port contract\n\n## Dependencies\nInforms M2 BulletinBoard port and M6 anchor adapters."
+    },
+    {
+      "title": "ADR: No Proof-of-Stake as election authority; permissioned BFT only if any chain",
+      "milestone": "M0",
+      "labels": [
+        "type:docs",
+        "type:security",
+        "area:bulletin-board",
+        "priority:P0"
+      ],
+      "body": "## Description\nWrite `docs/ADRs/0003-no-pos-authority.md`. PoS-as-election-authority is rejected (stake != franchise -> plutocratic capture; probabilistic finality contradicts immutability). If any anchoring chain is used, it must be permissioned BFT with named, accountable validators, or a public chain used only to timestamp roots.\n\n## Acceptance criteria\n- [ ] Decision and rationale recorded\n- [ ] Explicit allowance: permissioned CometBFT validators are acceptable as an anchor target only\n- [ ] Consequences for governance profile and anchor-cosmos adapter\n\n## Dependencies\nRelated to ADR 0002."
+    },
+    {
+      "title": "ADR: Paper + RLA is the only software-independence anchor",
+      "milestone": "M0",
+      "labels": [
+        "type:docs",
+        "type:security",
+        "area:rla",
+        "priority:P0"
+      ],
+      "body": "## Description\nWrite `docs/ADRs/0004-paper-rla-software-independence.md`. The only accepted software-independence anchor is voter-verified paper ballots of record audited by an RLA. Remote/digital-only deployments must state plainly that they do NOT achieve software independence.\n\n## Acceptance criteria\n- [ ] Decision: paper is the legal record, inspected before electronic finalize, retained; paper wins on discrepancy\n- [ ] Requirement: digital-only profiles carry an explicit no-software-independence disclaimer\n- [ ] Consequences for the M4 polling-place profile\n\n## Dependencies\nInforms M4."
+    },
+    {
+      "title": "ADR: Single-use enforced by published nullifiers, not TTL",
+      "milestone": "M0",
+      "labels": [
+        "type:docs",
+        "type:security",
+        "area:crypto",
+        "priority:P1"
+      ],
+      "body": "## Description\nWrite `docs/ADRs/0005-nullifiers-not-ttl.md`. Double-voting is prevented by a published, per-credential nullifier in a server-side spent set, not by a time-to-live window. TTL bounds when, not how many times.\n\n## Acceptance criteria\n- [ ] Decision and rationale recorded\n- [ ] Maps the original concept's `TTL`/`BRVC` reuse problem to the nullifier solution\n- [ ] Notes the published-nullifier privacy considerations (no link to identity)\n\n## Dependencies\nInforms M1 crypto and M3 registrar/casting."
+    },
+    {
+      "title": "ADR: Independent verifier in a different language and team than the core",
+      "milestone": "M0",
+      "labels": [
+        "type:docs",
+        "type:security",
+        "area:verifier",
+        "priority:P1"
+      ],
+      "body": "## Description\nWrite `docs/ADRs/0006-independent-verifier-language.md`. The independent verifier is implemented in a different language (Python) by a different track than the Rust core, so a single bug cannot mask itself, and is additionally cross-checked against ElectionGuard's verifier.\n\n## Acceptance criteria\n- [ ] Decision and rationale (diverse implementation reduces correlated failure)\n- [ ] Process note: core and verifier should not share serialization/transcript code paths beyond the published spec\n\n## Dependencies\nInforms M1 verifier."
+    },
+    {
+      "title": "ADR: ristretto255 + exponential ElGamal following ElectionGuard 2.x (no hand-rolled ciphers)",
+      "milestone": "M0",
+      "labels": [
+        "type:docs",
+        "type:security",
+        "area:crypto",
+        "priority:P1"
+      ],
+      "body": "## Description\nWrite `docs/ADRs/0007-ristretto255-elgamal-electionguard.md`. The cryptographic substrate is exponential ElGamal over ristretto255 using audited crates (curve25519-dalek), following ElectionGuard 2.x; no hand-rolled primitives, and Fiat-Shamir done over a Merlin/STROBE transcript to avoid weak-Fiat-Shamir bugs.\n\n## Acceptance criteria\n- [ ] Decision and rationale recorded\n- [ ] Lists the approved crates and the prohibition on bespoke ciphers\n- [ ] Notes ElectionGuard 2.x as the interop target\n\n## Dependencies\nInforms M1 crypto core."
+    },
+    {
+      "title": "ADR: Receipt-freeness - never give a voter a transferable proof of their vote",
+      "milestone": "M0",
+      "labels": [
+        "type:docs",
+        "type:security",
+        "area:voter-app",
+        "priority:P1"
+      ],
+      "body": "## Description\nWrite `docs/ADRs/0008-receipt-freeness.md`. No voter ever receives a transferable proof of how they voted. This kills vote-buying/coercion by construction in the strong tiers and is precisely the property the original 'see your vote on the blockchain' step violated.\n\n## Acceptance criteria\n- [ ] Decision and rationale recorded\n- [ ] Spells out what the voter MAY keep (privacy-preserving tracker / Benaloh challenge artifact) vs. MUST NOT (decryptable receipt)\n- [ ] Cross-links the original-concept Step 17 mapping\n\n## Dependencies\nInforms M3 voter app and M6 Selene tier."
+    },
+    {
+      "title": "Define the canonical transcript schema (CRYPTO_SPEC.md + transcript types)",
+      "milestone": "M0",
+      "labels": [
+        "type:docs",
+        "type:security",
+        "area:crypto",
+        "priority:P0",
+        "needs-design"
+      ],
+      "body": "## Description\nWrite `docs/CRYPTO_SPEC.md` specifying byte-level canonical encodings for the transcript: ElGamal ciphertexts, disjunctive Chaum-Pedersen ballot-validity proofs, decryption-correctness proofs, DKG commitments, nullifiers, Merkle leaves/nodes, and the Fiat-Shamir transcript domain separators. The existing TS PoC (`reference/src/codec.ts`, `proofs.ts`, `bulletin.ts`) is the starting point.\n\nThis spec is the contract that lets the Rust core, the Python verifier, and the ElectionGuard verifier agree byte-for-byte.\n\n## Acceptance criteria\n- [ ] Canonical point/scalar encodings fixed (ristretto255, little-endian scalars)\n- [ ] Domain-separation tags listed for every Fiat-Shamir hash (e.g. 'ballot-bit', 'decryption')\n- [ ] Merkle leaf/node prefix bytes documented (matches RFC 6962 style in the PoC)\n- [ ] One worked example transcript with expected hashes\n\n## Dependencies\nDepends on ADR 0007 and 0009. Blocks M1 cross-verification work."
+    },
+    {
+      "title": "Stand up the monorepo: pnpm + Turborepo alongside a Cargo workspace",
+      "milestone": "M0",
+      "labels": [
+        "type:chore",
+        "area:infra",
+        "priority:P1",
+        "good-first-issue"
+      ],
+      "body": "## Description\nCreate the planned monorepo skeleton from the README layout: a pnpm + Turborepo TypeScript workspace (`packages/`, `apps/`) next to a Cargo workspace (`crates/`), plus `verifier/`, `rla/`, `contracts/`, `circuits/`, `docker/`. Migrate the existing `reference/` PoC in as a workspace package without breaking `npm run demo`/`selftest`.\n\n## Acceptance criteria\n- [ ] `pnpm install` and `pnpm -w build` succeed at the root\n- [ ] `cargo build` succeeds on the empty Cargo workspace\n- [ ] Empty placeholder crates/packages match the README tree\n- [ ] Existing reference demo + selftest still run\n- [ ] README repo-layout section updated if anything diverges\n\n## Dependencies\nNone. Helpful prerequisite for M1+."
+    },
+    {
+      "title": "Set up CI: typecheck + reference selftest on every PR",
+      "milestone": "M0",
+      "labels": [
+        "type:chore",
+        "area:ci",
+        "priority:P1",
+        "good-first-issue"
+      ],
+      "body": "## Description\nAdd a GitHub Actions workflow that runs the existing reference checks (`npm run typecheck` and `npm run selftest`, the 2000/2000 randomized soundness tests) on every push and PR. This locks in the green baseline before the Rust port begins.\n\n## Acceptance criteria\n- [ ] Workflow runs typecheck and selftest on PRs to main\n- [ ] Failing selftest fails the build (non-zero exit honored)\n- [ ] Node version pinned; pnpm/npm cache configured\n- [ ] Status badge added to README\n\n## Dependencies\nEasier after the monorepo issue, but can target `reference/` directly first."
+    },
+    {
+      "title": "Document and lock the M0 open questions before crypto work starts",
+      "milestone": "M0",
+      "labels": [
+        "type:research",
+        "area:infra",
+        "priority:P2"
+      ],
+      "body": "## Description\nThe README roadmap says M0 must 'lock the open questions.' Collect every unresolved design question (default tally vs. mixnet thresholds, credential format details, anchor cadence, nullifier publication privacy, profile defaults) into a tracking issue/doc and resolve or explicitly defer each with a rationale.\n\n## Acceptance criteria\n- [ ] Open-questions list compiled from README, ADRs, and threat model\n- [ ] Each item marked resolved (link to ADR) or explicitly deferred with owner\n- [ ] No P0 question left ambiguous before M1 kickoff\n\n## Dependencies\nDepends on the ADRs and threat model landing."
+    },
+    {
+      "title": "Scaffold the vvp-crypto Rust crate (ristretto255 group + scalar ops)",
+      "milestone": "M1",
+      "labels": [
+        "type:task",
+        "area:crypto",
+        "priority:P0"
+      ],
+      "body": "## Description\nCreate `crates/vvp-crypto` with curve25519-dalek (ristretto255). Port the group layer from `reference/src/group.ts`: the generator G, group order, scalar arithmetic, random scalar generation (CSPRNG), point add/sub/mul, and a domain-separated hash-to-scalar built on a Merlin/STROBE transcript (replacing the ad-hoc `hashToScalar`).\n\n## Acceptance criteria\n- [ ] Crate builds and `cargo test` passes\n- [ ] Encodings match `CRYPTO_SPEC.md` byte-for-byte (round-trip tests)\n- [ ] hash-to-scalar uses Merlin transcript with the spec's domain tags\n- [ ] No hand-rolled field/curve math; only audited crates\n\n## Dependencies\nDepends on CRYPTO_SPEC.md and ADR 0007."
+    },
+    {
+      "title": "Implement exponential ElGamal (encrypt, homomorphic add, decryption share) in Rust",
+      "milestone": "M1",
+      "labels": [
+        "type:task",
+        "area:crypto",
+        "priority:P0"
+      ],
+      "body": "## Description\nPort `reference/src/elgamal.ts` to `vvp-crypto`: exponential ElGamal over ristretto255 (encode message m as g^m), homomorphic ciphertext addition, combined public key, trustee partial decryption shares, and the bounded discrete-log recovery for small tallies.\n\n## Acceptance criteria\n- [ ] encrypt/add/decryptionShare/combinePublicKey implemented with explicit types\n- [ ] discrete-log recovery bounded by elector count, errors out of range\n- [ ] Property tests: homomorphic sum decrypts to the plaintext sum (port selftest case 4)\n- [ ] Byte-identical ciphertext encoding to the spec\n\n## Dependencies\nDepends on the vvp-crypto group scaffold."
+    },
+    {
+      "title": "Implement disjunctive Chaum-Pedersen ballot-validity proof in Rust",
+      "milestone": "M1",
+      "labels": [
+        "type:task",
+        "type:security",
+        "area:crypto",
+        "priority:P0"
+      ],
+      "body": "## Description\nPort `proveBit`/`verifyBit` from `reference/src/proofs.ts` to Rust: a non-interactive disjunctive Chaum-Pedersen (Cramer-Damgard-Schoenmakers OR-composition) proof that a ciphertext encrypts 0 or 1, Fiat-Shamir over the Merlin transcript. This is the anti-stuffing primitive.\n\n## Acceptance criteria\n- [ ] proveBit/verifyBit implemented with explicit types\n- [ ] Honest 0/1 ballots verify; out-of-range messages cannot be faked as 0 or 1\n- [ ] Single-bit mutation of any proof field fails verification (non-malleability)\n- [ ] Randomized soundness test mirrors the 2000-case TS selftest and passes\n\n## Dependencies\nDepends on the Rust ElGamal issue."
+    },
+    {
+      "title": "Implement Chaum-Pedersen decryption-correctness proof in Rust",
+      "milestone": "M1",
+      "labels": [
+        "type:task",
+        "type:security",
+        "area:crypto",
+        "priority:P0"
+      ],
+      "body": "## Description\nPort `proveDecryption`/`verifyDecryption` from `reference/src/proofs.ts`: a Chaum-Pedersen proof that a trustee's decryption share satisfies log_g(pub) == log_a(share) without revealing the secret. Stops a corrupt trustee from faking the count.\n\n## Acceptance criteria\n- [ ] proveDecryption/verifyDecryption implemented with explicit types\n- [ ] Honest share verifies; a wrong share cannot be proven\n- [ ] Randomized soundness test mirrors TS selftest case 5\n\n## Dependencies\nDepends on the Rust ElGamal issue."
+    },
+    {
+      "title": "Implement Pedersen DKG for k-of-n threshold trustees in Rust",
+      "milestone": "M1",
+      "labels": [
+        "type:task",
+        "type:security",
+        "area:crypto",
+        "priority:P0",
+        "needs-design"
+      ],
+      "body": "## Description\nThe PoC uses N-of-N additive sharing (`setupTrustees`). Implement a real Pedersen DKG so trustees jointly produce a k-of-n threshold key whose secret is NEVER reconstructed (Lagrange-combined partial decryptions only). Include the per-trustee feldman/pedersen commitments and complaint handling.\n\n## Acceptance criteria\n- [ ] DKG produces a joint public key from k-of-n trustees\n- [ ] Any k partials reconstruct the tally; fewer than k cannot\n- [ ] Secret key is never materialized in one place (test asserts the API offers no reconstruction path)\n- [ ] Commitment verification rejects a malformed dealer share\n- [ ] Design note on complaint/abort behavior recorded\n\n## Dependencies\nDepends on Rust ElGamal and decryption-proof issues. Largest M1 item; mark needs-design."
+    },
+    {
+      "title": "Implement Benaloh cast-or-challenge primitive in Rust/WASM",
+      "milestone": "M1",
+      "labels": [
+        "type:task",
+        "type:security",
+        "area:crypto",
+        "priority:P1",
+        "needs-design"
+      ],
+      "body": "## Description\nImplement the Benaloh cast-or-challenge mechanism in `vvp-crypto`: a voter can either cast an encrypted ballot or spoil-and-audit it, revealing the randomness so an independent device can confirm the ciphertext encodes the displayed choice. Must be runnable in-browser via WASM so a malicious server cannot fake the audit.\n\n## Acceptance criteria\n- [ ] Challenge path exposes the encryption randomness for independent re-encryption check\n- [ ] Cast path commits the ballot without revealing the choice\n- [ ] WASM-exposed API usable from the voter app\n- [ ] Test: a tampered ciphertext fails the challenge check\n\n## Dependencies\nDepends on Rust ElGamal; consumed by M3 voter app."
+    },
+    {
+      "title": "Implement nullifier derivation and spent-set semantics in Rust",
+      "milestone": "M1",
+      "labels": [
+        "type:task",
+        "type:security",
+        "area:crypto",
+        "priority:P1"
+      ],
+      "body": "## Description\nImplement per-credential nullifier derivation and the spent-set check that enforces single-use (per ADR 0005, not TTL). The nullifier must be publishable without linking to voter identity.\n\n## Acceptance criteria\n- [ ] Deterministic nullifier from a credential; same credential -> same nullifier\n- [ ] Distinct credentials -> distinct nullifiers (collision test)\n- [ ] Nullifier reveals nothing about identity or vote (documented argument + test of unlinkability where feasible)\n- [ ] Double-spend attempt rejected by the spent-set check\n\n## Dependencies\nDepends on ADR 0005; consumed by M3 casting service."
+    },
+    {
+      "title": "Compile vvp-crypto to WASM with a typed JS/TS binding",
+      "milestone": "M1",
+      "labels": [
+        "type:task",
+        "area:crypto",
+        "area:infra",
+        "priority:P1"
+      ],
+      "body": "## Description\nProduce a WASM build of `vvp-crypto` (wasm-bindgen/wasm-pack) with a thin, fully-typed TypeScript wrapper, so the kernel, voter app, and admin console call the audited Rust crypto rather than reimplementing it.\n\n## Acceptance criteria\n- [ ] `wasm-pack build` produces a package consumable by the pnpm workspace\n- [ ] TypeScript types generated, no `any`\n- [ ] A round-trip test from TS calls Rust encrypt + proveBit + verifyBit\n- [ ] Bundle size noted; tree-shaking verified\n\n## Dependencies\nDepends on the ElGamal and proof issues."
+    },
+    {
+      "title": "Build the independent Python reference verifier (vvp-verify-py)",
+      "milestone": "M1",
+      "labels": [
+        "type:feature",
+        "type:security",
+        "area:verifier",
+        "priority:P0"
+      ],
+      "body": "## Description\nCreate `verifier/vvp-verify-py`: a CLI that takes only a published transcript and re-checks everything from scratch, mirroring `reference/src/verify.ts` (joint key, Merkle root, every ballot's 0/1 proof, homomorphic aggregate, each decryption-share proof, final tally). Written in Python by a different track than the Rust core, sharing only the published `CRYPTO_SPEC.md`, per ADR 0006.\n\n## Acceptance criteria\n- [ ] `vvp-verify <transcript.json>` exits 0 on a valid transcript, non-zero on any tamper\n- [ ] Reproduces all six checks from the TS verifier\n- [ ] Catches the four PoC insider attacks (tamper, stuffing, rigged tally, lone-trustee unmask) on injected fixtures\n- [ ] No code shared with the Rust core beyond the spec\n\n## Dependencies\nDepends on CRYPTO_SPEC.md. Core deliverable for M1 DoD."
+    },
+    {
+      "title": "Cross-verify a transcript under Rust core, Python verifier, AND ElectionGuard",
+      "milestone": "M1",
+      "labels": [
+        "type:task",
+        "type:security",
+        "area:verifier",
+        "area:ci",
+        "priority:P0"
+      ],
+      "body": "## Description\nThe M1 definition-of-done: a single transcript must verify under (1) the Rust `vvp-crypto` self-check, (2) the independent Python verifier, and (3) the open-source ElectionGuard verifier. Produce the interop fixtures and wire the three-way check into CI.\n\n## Acceptance criteria\n- [ ] Transcript format aligned with ElectionGuard 2.x where required for interop\n- [ ] CI job runs all three verifiers on the same transcript and asserts agreement\n- [ ] Any byte-level disagreement fails the build with a diagnostic diff\n- [ ] Documented mapping of any fields that differ from ElectionGuard and why\n\n## Dependencies\nDepends on the Python verifier, WASM crypto, and CRYPTO_SPEC.md. This closes M1."
+    },
+    {
+      "title": "Generate and publish ElectionGuard-compatible test vectors",
+      "milestone": "M1",
+      "labels": [
+        "type:task",
+        "area:crypto",
+        "area:ci",
+        "priority:P1"
+      ],
+      "body": "## Description\nProduce a fixed set of test vectors (known keys, known votes, expected ciphertexts, proofs, roots, tally) checked into the repo and consumed by Rust, Python, and the conformance suite. Where ElectionGuard publishes its own vectors, include a subset and document any divergences.\n\n## Acceptance criteria\n- [ ] Deterministic vectors checked in with documented provenance\n- [ ] Rust and Python both validate the vectors in CI\n- [ ] A regression test fails if any encoding changes\n\n## Dependencies\nDepends on CRYPTO_SPEC.md."
+    },
+    {
+      "title": "Add fuzzing/property tests for proof soundness in Rust",
+      "milestone": "M1",
+      "labels": [
+        "type:security",
+        "area:crypto",
+        "area:ci",
+        "priority:P2"
+      ],
+      "body": "## Description\nUse `proptest`/`cargo-fuzz` to harden the proof verifiers beyond the deterministic selftest: fuzz proof byte layouts, malformed points, and edge scalars to confirm no malformed input is ever accepted as a valid proof.\n\n## Acceptance criteria\n- [ ] proptest strategies for ciphertexts, bit-proofs, decryption-proofs\n- [ ] Fuzz target for the verifier entrypoints\n- [ ] No accepted-invalid case found; corpus checked in\n- [ ] Runs in CI nightly\n\n## Dependencies\nDepends on the Rust proof issues."
+    },
+    {
+      "title": "Define the ElectionManifest schema (Zod) and TypeScript types",
+      "milestone": "M2",
+      "labels": [
+        "type:feature",
+        "area:kernel",
+        "priority:P0",
+        "needs-design"
+      ],
+      "body": "## Description\nDefine the declarative `ElectionManifest` in `packages/kernel` using Zod: contests and options, trustee set and threshold (k-of-n), chosen adapters for each of the five ports, the deployment profile preset, anchor configuration, and crypto parameters. Picking a manifest is how an operator configures an election without code changes.\n\n## Acceptance criteria\n- [ ] Zod schema with inferred TS types (no `any`)\n- [ ] Profile presets (governance/society/polling-place) expand to concrete adapter choices\n- [ ] Validation rejects inconsistent manifests (e.g. polling-place without paper/RLA)\n- [ ] Example manifests for a club election and a DAO proposal checked in\n\n## Dependencies\nDepends on ADRs for profile semantics. Foundation for the rest of M2/M3."
+    },
+    {
+      "title": "Define the five typed ports (IdentityProvider, AnonymityLayer, TallyingScheme, BulletinBoard, Auditor)",
+      "milestone": "M2",
+      "labels": [
+        "type:feature",
+        "area:kernel",
+        "priority:P0",
+        "needs-design"
+      ],
+      "body": "## Description\nSpecify the five port interfaces in `packages/kernel` as the seams the kernel orchestrates against, plus the optional `VoteTransport` port for governance modes. The `BulletinBoard` port follows the README RFC-6962 signature (append/getSignedRoot/proveInclusion/freeze/getEntries).\n\n## Acceptance criteria\n- [ ] Each port is a typed interface with documented method contracts\n- [ ] BulletinBoard matches the README signature exactly\n- [ ] Ports reference the WASM crypto types, not reimplementations\n- [ ] A mock adapter stub exists for each port to enable kernel tests\n\n## Dependencies\nDepends on ElectionManifest and the M1 WASM crypto binding."
+    },
+    {
+      "title": "Implement the phase orchestrator (XState) for the election lifecycle",
+      "milestone": "M2",
+      "labels": [
+        "type:feature",
+        "area:kernel",
+        "priority:P0"
+      ],
+      "body": "## Description\nImplement the kernel phase orchestrator as an XState machine: setup -> DKG/key-publish -> open -> casting -> close/freeze -> tally -> publish-transcript -> verify. Each transition calls the relevant ports. Illegal transitions (e.g. casting after freeze) must be impossible.\n\n## Acceptance criteria\n- [ ] State machine covers every lifecycle phase with guarded transitions\n- [ ] Drives the in-memory adapters end to end for a yes/no election\n- [ ] Produces a transcript that the M1 verifiers accept\n- [ ] Illegal transitions rejected with typed errors\n\n## Dependencies\nDepends on the five-ports issue."
+    },
+    {
+      "title": "Implement the in-memory BulletinBoard adapter",
+      "milestone": "M2",
+      "labels": [
+        "type:task",
+        "area:bulletin-board",
+        "priority:P0",
+        "good-first-issue"
+      ],
+      "body": "## Description\nPort the PoC `reference/src/bulletin.ts` into `packages/bulletin-board` as the reference in-memory adapter implementing the full BulletinBoard port (append, getSignedRoot, proveInclusion, freeze, getEntries) with RFC-6962-style Merkle semantics and signed tree heads.\n\n## Acceptance criteria\n- [ ] Implements every BulletinBoard method with explicit types\n- [ ] proveInclusion returns a valid audit path verifiable against the signed root\n- [ ] freeze produces a final signed root; appends after freeze rejected\n- [ ] Unit tests cover odd-leaf duplication and empty-tree root\n\n## Dependencies\nDepends on the five-ports issue."
+    },
+    {
+      "title": "Implement the postgres-log BulletinBoard adapter (default)",
+      "milestone": "M2",
+      "labels": [
+        "type:feature",
+        "area:bulletin-board",
+        "priority:P0"
+      ],
+      "body": "## Description\nImplement the default `postgres-log` adapter: an authenticated append-only transparency log with signed tree heads (Trillian/Sigstore style) over Postgres. This is the production default board with no chain.\n\n## Acceptance criteria\n- [ ] Append is durable and monotonic; the log is verifiably append-only (consistency proofs)\n- [ ] Signed tree heads produced on a configurable cadence\n- [ ] proveInclusion and getEntries(range) backed by the DB\n- [ ] Migrations and a docker-compose Postgres for local dev\n- [ ] Passes the conformance suite identically to the in-memory adapter\n\n## Dependencies\nDepends on the in-memory adapter and the five-ports issue."
+    },
+    {
+      "title": "Build the BulletinBoard conformance test suite",
+      "milestone": "M2",
+      "labels": [
+        "type:feature",
+        "type:security",
+        "area:bulletin-board",
+        "area:ci",
+        "priority:P0"
+      ],
+      "body": "## Description\nBuild a single conformance suite that runs identical inclusion-proof and consistency vectors against every BulletinBoard adapter, so 'chain-agnostic' is tested, not asserted. The M2 DoD requires that the same protocol runs byte-identically on the in-memory and Postgres boards.\n\n## Acceptance criteria\n- [ ] One suite parameterized over adapters (in-memory, postgres-log)\n- [ ] Asserts identical signed roots for identical input sequences\n- [ ] Verifies inclusion and consistency proofs against published roots\n- [ ] Wired into CI; future adapters plug in by registering\n\n## Dependencies\nDepends on the in-memory and postgres-log adapters. Closes the M2 DoD together with the orchestrator."
+    },
+    {
+      "title": "Wire the kernel to run an election byte-identically across boards (M2 DoD)",
+      "milestone": "M2",
+      "labels": [
+        "type:task",
+        "area:kernel",
+        "area:bulletin-board",
+        "priority:P0"
+      ],
+      "body": "## Description\nThe M2 definition-of-done: drive the same election through the orchestrator twice, once with the in-memory board and once with postgres-log, and assert the resulting transcripts and signed roots are byte-identical.\n\n## Acceptance criteria\n- [ ] Single test runs the manifest against both boards\n- [ ] Resulting transcripts hash-equal\n- [ ] M1 verifiers accept both transcripts\n- [ ] CI gate added\n\n## Dependencies\nDepends on the orchestrator, both board adapters, and the conformance suite. Closes M2."
+    },
+    {
+      "title": "Implement the Belenios-style registrar (credential issuance, identity separated)",
+      "milestone": "M3",
+      "labels": [
+        "type:feature",
+        "type:security",
+        "area:registrar",
+        "priority:P0",
+        "needs-design"
+      ],
+      "body": "## Description\nImplement `packages/registrar`: a Belenios-style credential authority that, from an off-ledger eligibility roll, issues each voter a fresh per-election credential mapping to an Ed25519/Schnorr keypair. The registrar that knows identity must NOT be the casting server, so integrity survives if either the registrar or the server is honest (Belenios separation). No durable government ID ever crosses the seam (ADR 0001).\n\n## Acceptance criteria\n- [ ] Issues unlinkable per-election credentials from an eligibility list\n- [ ] Identity-to-credential mapping isolated from the casting service\n- [ ] Credential public part published; private part stays client-side / secure element\n- [ ] Design note shows the dual-honesty integrity argument\n- [ ] No SSN/durable ID present anywhere in the credential\n\n## Dependencies\nDepends on M1 crypto (signatures) and ADRs 0001/0005. Mark needs-design."
+    },
+    {
+      "title": "Implement the casting service: signed ballots + nullifier spent-set",
+      "milestone": "M3",
+      "labels": [
+        "type:feature",
+        "type:security",
+        "area:registrar",
+        "area:kernel",
+        "priority:P0"
+      ],
+      "body": "## Description\nImplement the casting service that accepts an encrypted ballot + validity proof signed by the voter's credential key, verifies the signature and the proof, checks/records the per-credential nullifier (single-use, ADR 0005), and appends to the BulletinBoard.\n\n## Acceptance criteria\n- [ ] Rejects ballots with an invalid signature or invalid 0/1 proof\n- [ ] Records the nullifier and rejects a second ballot from the same credential\n- [ ] Appends accepted ballots to the board and returns an inclusion receipt\n- [ ] No identity stored alongside the ballot\n\n## Dependencies\nDepends on the registrar, M1 nullifier work, and the BulletinBoard adapter."
+    },
+    {
+      "title": "Build the cast-or-challenge voter app (Next.js 15 + React 19 + WASM crypto)",
+      "milestone": "M3",
+      "labels": [
+        "type:feature",
+        "area:voter-app",
+        "priority:P0"
+      ],
+      "body": "## Description\nBuild `apps/voter`: a Next.js 15 / React 19 / Tailwind v4 client where the voter makes a selection, the app encrypts and proves it in-browser via the WASM crypto, and the voter may either CAST or CHALLENGE (Benaloh) to audit on an independent device. Receipt-freeness must hold: the app never produces a transferable proof of the choice (ADR 0008).\n\n## Acceptance criteria\n- [ ] Encryption + validity proof run client-side in WASM (server cannot see the plaintext)\n- [ ] Challenge flow lets the voter spoil-and-audit a ballot, confirming cast-as-intended\n- [ ] On cast, the app submits the signed ballot to the casting service and shows a privacy-preserving tracker (no decryptable receipt)\n- [ ] Inclusion proof against the signed root displayed to the voter\n- [ ] No `any`; explicit return types throughout\n\n## Dependencies\nDepends on WASM crypto, Benaloh primitive, casting service. Major M3 deliverable."
+    },
+    {
+      "title": "Implement k-of-n Pedersen DKG threshold tally pipeline",
+      "milestone": "M3",
+      "labels": [
+        "type:feature",
+        "type:security",
+        "area:tally",
+        "priority:P0"
+      ],
+      "body": "## Description\nImplement `crates/vvp-tally` (+ kernel wiring): run the Pedersen DKG among k-of-n trustees, homomorphically aggregate the board's ballots after close, collect threshold partial decryptions with correctness proofs, Lagrange-combine to recover the tally, and emit the published transcript. The secret key is never reconstructed.\n\n## Acceptance criteria\n- [ ] DKG ceremony produces the joint key used for casting\n- [ ] Aggregation + threshold decryption with k partials yields the correct tally\n- [ ] Each partial carries a Chaum-Pedersen correctness proof\n- [ ] Transcript verifies under both M1 verifiers\n\n## Dependencies\nDepends on M1 DKG and decryption-proof work."
+    },
+    {
+      "title": "Run a club-style election end to end and verify from the transcript (M3 DoD)",
+      "milestone": "M3",
+      "labels": [
+        "type:task",
+        "area:kernel",
+        "area:verifier",
+        "priority:P0"
+      ],
+      "body": "## Description\nThe M3 definition-of-done: run a complete society-profile club election (register voters, DKG, open, cast-or-challenge by multiple voters, close, threshold tally, publish transcript) and demonstrate that an unrelated third party verifies the result from the published transcript alone using the independent Python verifier.\n\n## Acceptance criteria\n- [ ] Scripted end-to-end run with a handful of voters and 3 trustees (k-of-n)\n- [ ] Published transcript contains only encrypted ballots, proofs, roots, and proven decryptions\n- [ ] Python verifier (fresh checkout, no shared state) returns success\n- [ ] An injected tamper is caught\n- [ ] Runbook documented\n\n## Dependencies\nDepends on registrar, casting service, voter app, and threshold tally. Closes M3."
+    },
+    {
+      "title": "Build the admin/operator console (create election, pick adapters and strategy)",
+      "milestone": "M3",
+      "labels": [
+        "type:feature",
+        "area:admin",
+        "priority:P1"
+      ],
+      "body": "## Description\nBuild `apps/admin`: an operator console to author an ElectionManifest (contests, trustees/threshold, profile, board adapter), trigger the lifecycle phases via the coordinator, and publish the transcript. Validation surfaces manifest errors before an election opens.\n\n## Acceptance criteria\n- [ ] Create-election form produces a valid ElectionManifest\n- [ ] Phase controls (open/close/tally/publish) gated by orchestrator state\n- [ ] Surfaces the signed root and links to the published transcript\n- [ ] No `any`; mutations go through custom hooks -> server actions\n\n## Dependencies\nDepends on the kernel, manifest, and a board adapter."
+    },
+    {
+      "title": "Implement the coordinator lifecycle control plane",
+      "milestone": "M3",
+      "labels": [
+        "type:task",
+        "area:kernel",
+        "area:admin",
+        "priority:P1"
+      ],
+      "body": "## Description\nImplement `packages/coordinator`: the control plane that the admin console and CLI drive, persisting election state, sequencing the orchestrator phases, and coordinating trustees during DKG and decryption.\n\n## Acceptance criteria\n- [ ] Persists per-election state and current phase\n- [ ] Exposes operations consumed by the admin console\n- [ ] Coordinates trustee DKG and partial-decryption collection\n- [ ] Recovers cleanly after a restart mid-election\n\n## Dependencies\nDepends on the orchestrator and threshold tally."
+    },
+    {
+      "title": "Voter-facing transcript explorer / public verification page",
+      "milestone": "M3",
+      "labels": [
+        "type:feature",
+        "area:voter-app",
+        "area:verifier",
+        "priority:P2",
+        "good-first-issue"
+      ],
+      "body": "## Description\nAdd a public page (in `apps/voter` or a small static viewer) that lets anyone browse a published transcript, look up their privacy-preserving tracker's inclusion proof, and download the transcript for offline verification with the Python verifier. Reveals nothing about any vote.\n\n## Acceptance criteria\n- [ ] Displays signed root, ballot count, and final tally\n- [ ] Tracker lookup returns an inclusion proof, never a plaintext\n- [ ] One-click transcript download + copy-paste verifier command\n- [ ] No receipt of how anyone voted is ever shown\n\n## Dependencies\nDepends on the voter app and a published transcript format."
+    },
+    {
+      "title": "Specify the VVPAT paper-ballot record and chain-of-custody (polling-place)",
+      "milestone": "M4",
+      "labels": [
+        "type:feature",
+        "type:security",
+        "area:rla",
+        "priority:P1",
+        "needs-design"
+      ],
+      "body": "## Description\nSpecify and implement the voter-verified paper ballot of record for the in-person-only polling-place profile: paper is inspected before the electronic cast finalizes, retained behind glass, and is the legal record (ADR 0004). Define ballot layout, reconciliation, and chain-of-custody requirements.\n\n## Acceptance criteria\n- [ ] Paper-record spec with reconciliation procedure\n- [ ] Profile enforces in-person-only and the no-handing-back rule (no coercion proof)\n- [ ] Chain-of-custody checklist documented\n- [ ] Manifest validation requires paper+RLA for polling-place\n\n## Dependencies\nDepends on ADR 0004 and the M3 society profile."
+    },
+    {
+      "title": "Integrate risk-limiting audit tooling (ballot-polling + comparison)",
+      "milestone": "M4",
+      "labels": [
+        "type:feature",
+        "type:security",
+        "area:rla",
+        "priority:P1"
+      ],
+      "body": "## Description\nIntegrate RLA tooling under `rla/arlo-rla` supporting ballot-polling and comparison audits against the paper record, with sample-size computation and a stopping rule that escalates to a full hand count on discrepancy. Paper wins on conflict with the electronic tally.\n\n## Acceptance criteria\n- [ ] Computes RLA sample sizes for a given risk limit and margin\n- [ ] Supports ballot-polling and comparison workflows\n- [ ] Produces an auditable report tying paper samples to electronic records\n- [ ] Escalation to full count on failure\n\n## Dependencies\nDepends on the VVPAT spec."
+    },
+    {
+      "title": "Demonstrate RLA catches an injected endpoint vote-flip (M4 DoD)",
+      "milestone": "M4",
+      "labels": [
+        "type:task",
+        "type:security",
+        "area:rla",
+        "priority:P0"
+      ],
+      "body": "## Description\nThe M4 definition-of-done: inject a malware-style endpoint flip (display A, record B) into a simulated polling-place run and show the RLA against the paper record detects the discrepancy and triggers escalation.\n\n## Acceptance criteria\n- [ ] Scripted scenario injects an endpoint flip on a subset of ballots\n- [ ] RLA against paper detects the discrepancy within the risk limit\n- [ ] Escalation path exercised; paper count prevails\n- [ ] Result documented as the software-independence demonstration\n\n## Dependencies\nDepends on the VVPAT spec and RLA tooling. Closes M4."
+    },
+    {
+      "title": "Implement gasless EIP-712 signed-vote VoteTransport (governance profile)",
+      "milestone": "M5",
+      "labels": [
+        "type:feature",
+        "area:governance",
+        "priority:P1"
+      ],
+      "body": "## Description\nImplement the off-chain `VoteTransport` adapter for the governance profile: Snapshot-style gasless EIP-712 signed votes, with EIP-1271 (contract wallets) and ERC-6492 (pre-deploy) signature support. Ballots go to the bulletin board, not on-chain.\n\n## Acceptance criteria\n- [ ] Verifies EIP-712, EIP-1271, and ERC-6492 signatures\n- [ ] Gasless submission path; no on-chain ballot writes\n- [ ] Votes recorded on the bulletin board with the standard transcript\n- [ ] A DAO-style proposal can be cast and tallied\n\n## Dependencies\nDepends on the M2 kernel and bulletin board."
+    },
+    {
+      "title": "Implement pluggable voting-power strategies at a frozen snapshot",
+      "milestone": "M5",
+      "labels": [
+        "type:feature",
+        "area:governance",
+        "priority:P1",
+        "needs-design"
+      ],
+      "body": "## Description\nImplement pluggable voting-power strategies (token balance, NFT, quadratic, delegation, allowlist Merkle root) evaluated at a frozen snapshot block, selectable in the manifest, per the governance profile.\n\n## Acceptance criteria\n- [ ] Strategy interface with at least token, quadratic, and allowlist-Merkle implementations\n- [ ] Power resolved at a pinned snapshot block, reproducibly\n- [ ] Strategy choice expressed in the ElectionManifest\n- [ ] Independently re-derivable from public inputs\n\n## Dependencies\nDepends on the EIP-712 transport."
+    },
+    {
+      "title": "Add optional trustless optimistic settlement (oSnap/SafeSnap) with dispute window",
+      "milestone": "M5",
+      "labels": [
+        "type:feature",
+        "area:governance",
+        "priority:P2",
+        "needs-design"
+      ],
+      "body": "## Description\nAdd optional trustless settlement for governance outcomes: an oSnap/SafeSnap-style optimistic execution behind a dispute window + timelock, with Foundry contracts (OZ Governor + Safe/Zodiac). Outcome is independently re-derivable from the transcript before execution.\n\n## Acceptance criteria\n- [ ] Foundry contracts for optimistic settlement with dispute window + timelock\n- [ ] Settlement references the published result, re-derivable from the transcript\n- [ ] Dispute path can halt execution\n- [ ] Contract tests cover happy path and dispute\n\n## Dependencies\nDepends on the voting-power strategies and EIP-712 transport."
+    },
+    {
+      "title": "Run a gasless DAO proposal that settles trustlessly (M5 DoD)",
+      "milestone": "M5",
+      "labels": [
+        "type:task",
+        "area:governance",
+        "priority:P1"
+      ],
+      "body": "## Description\nThe M5 definition-of-done: run a DAO-style proposal end to end (gasless EIP-712 votes, snapshot-based voting power, optional optimistic settlement) and show the outcome settles trustlessly and is independently re-derivable from the published transcript.\n\n## Acceptance criteria\n- [ ] Scripted DAO proposal run with snapshot voting power\n- [ ] Votes gasless; outcome published as a verifiable transcript\n- [ ] Outcome independently re-derived by a third party\n- [ ] Settlement (if enabled) executes after the dispute window\n\n## Dependencies\nDepends on the transport, strategies, and settlement issues. Closes M5."
+    },
+    {
+      "title": "Implement the Terelius-Wikstrom verifiable mixnet (ranked / write-in)",
+      "milestone": "M6",
+      "labels": [
+        "type:feature",
+        "type:security",
+        "area:tally",
+        "priority:P2",
+        "needs-design"
+      ],
+      "body": "## Description\nImplement `crates/vvp-mixnet`: a re-encryption mixnet with Terelius-Wikstrom shuffle proofs, used as the TallyingScheme for ranked-choice and write-in contests where homomorphic aggregation is insufficient.\n\n## Acceptance criteria\n- [ ] Re-encryption shuffle with publicly verifiable correctness proofs\n- [ ] Independent verifier re-checks the shuffle from the transcript\n- [ ] Supports ranked-choice/write-in ballots end to end\n- [ ] Test catches a dishonest shuffle\n\n## Dependencies\nDepends on M1 crypto core."
+    },
+    {
+      "title": "Implement optional coercion-resistant tiers (Selene, MACI/Semaphore, JCJ/Civitas)",
+      "milestone": "M6",
+      "labels": [
+        "type:feature",
+        "type:security",
+        "area:crypto",
+        "priority:P2",
+        "needs-design"
+      ],
+      "body": "## Description\nImplement the optional AnonymityLayer tiers selectable per manifest: Selene (deferred fakeable trackers), MACI/Semaphore (zk anti-collusion), and full JCJ/Civitas anonymous credentials (coercion-resistance at quadratic tally cost + untappable-registration assumption). circom/arkworks circuits live under `circuits/`.\n\n## Acceptance criteria\n- [ ] At least one tier (Selene or MACI/Semaphore) fully integrated and verifiable\n- [ ] Tier selectable via the ElectionManifest\n- [ ] Receipt-freeness/coercion-resistance properties documented per tier\n- [ ] Circuits build and prove/verify in CI\n\n## Dependencies\nDepends on the kernel ports and M1 crypto."
+    },
+    {
+      "title": "Implement anchor adapters (anchor-evm, anchor-cosmos, anchor-bitcoin) for signed roots only",
+      "milestone": "M6",
+      "labels": [
+        "type:feature",
+        "area:bulletin-board",
+        "priority:P2"
+      ],
+      "body": "## Description\nImplement the chain-agnostic `anchor-*` adapters behind the `AnchorTarget` sub-interface: write ONLY a ~32-byte signed Merkle root for tamper-evidence/timestamping (ballots never on-chain, ADR 0002). Targets: anchor-evm (viem), anchor-cosmos (permissioned CometBFT, ADR 0003), anchor-bitcoin (OP_RETURN).\n\n## Acceptance criteria\n- [ ] Each adapter writes only the signed root, never ballots\n- [ ] All adapters pass the BulletinBoard conformance suite\n- [ ] anchor-cosmos uses permissioned BFT with named validators; no PoS authority\n- [ ] Parallel multi-anchor ('belt and suspenders') works by configuration\n\n## Dependencies\nDepends on the M2 conformance suite and ADRs 0002/0003."
+    },
+    {
+      "title": "Demonstrate parallel anchoring to Postgres + IPFS + permissioned BFT with identical verification (M6 DoD)",
+      "milestone": "M6",
+      "labels": [
+        "type:task",
+        "type:security",
+        "area:bulletin-board",
+        "area:ci",
+        "priority:P1"
+      ],
+      "body": "## Description\nThe M6 definition-of-done: run one election whose signed roots are anchored in parallel to Postgres, IPFS, and a permissioned BFT chain, and show verification is identical across all three.\n\n## Acceptance criteria\n- [ ] Single election anchors to all three targets simultaneously\n- [ ] Independent verifier confirms the same root and tally against each\n- [ ] Conformance suite green across adapters\n- [ ] Demo documented\n\n## Dependencies\nDepends on the anchor adapters and object-store adapter. Closes M6."
+    },
+    {
+      "title": "Build the adversary lab demonstrating why the original concept fails",
+      "milestone": "M6",
+      "labels": [
+        "type:feature",
+        "area:infra",
+        "type:docs",
+        "priority:P2"
+      ],
+      "body": "## Description\nBuild `apps/lab`: a composition/adversary harness that interactively demonstrates the insider attacks the platform defeats (ballot tampering, stuffing, rigged tally, lone-trustee unmask) and concretely shows why the original 2014 concept's SSN tokens, stable pseudonyms, and 'see your vote on the chain' receipt fail. Extends the existing `reference/src/demo.ts`.\n\n## Acceptance criteria\n- [ ] Reproduces the four PoC insider-attack demos in a UI\n- [ ] Shows the receipt/coercion failure of the original Step-17 design\n- [ ] Each demo links to the relevant ADR/threat-model section\n\n## Dependencies\nDepends on the kernel and verifier."
+    },
+    {
+      "title": "Commission external cryptographic review and red-team",
+      "milestone": "M7",
+      "labels": [
+        "type:security",
+        "area:crypto",
+        "priority:P0"
+      ],
+      "body": "## Description\nEngage independent reviewers for a cryptographic review of `vvp-crypto` and the protocol, plus an adversarial red-team of the deployed society and governance profiles. Triage and fix findings before any pilot.\n\n## Acceptance criteria\n- [ ] External crypto review completed with a published report\n- [ ] Red-team engagement completed\n- [ ] All critical/high findings resolved or documented with mitigations\n\n## Dependencies\nDepends on M1-M3 being feature-complete."
+    },
+    {
+      "title": "Produce signed, reproducible release builds",
+      "milestone": "M7",
+      "labels": [
+        "type:chore",
+        "area:ci",
+        "area:infra",
+        "priority:P1"
+      ],
+      "body": "## Description\nSet up reproducible builds and signed releases for the WASM crypto, verifier, apps, and Docker images, so self-hosters can verify that artifacts match the audited source (supports endpoint integrity controls).\n\n## Acceptance criteria\n- [ ] Deterministic/reproducible build of vvp-crypto WASM and verifier\n- [ ] Release artifacts and Docker images signed (sigstore/cosign)\n- [ ] Verification instructions in the docs\n- [ ] CI publishes signed artifacts on tag\n\n## Dependencies\nDepends on the monorepo and docker work."
+    },
+    {
+      "title": "Run a low-stakes pilot election (club or DAO) - explicitly not a binding public election",
+      "milestone": "M7",
+      "labels": [
+        "type:task",
+        "area:infra",
+        "priority:P1"
+      ],
+      "body": "## Description\nThe M7 definition-of-done: run a real low-stakes pilot with a willing club, society, or DAO, publish the transcript, and have third parties independently verify it. This is explicitly NOT a binding government/public election (per scope).\n\n## Acceptance criteria\n- [ ] A real pilot election run with a partner org\n- [ ] Transcript published; independent third-party verification performed\n- [ ] Honest scope reaffirmed in pilot communications (not a binding public election)\n- [ ] Retrospective with lessons learned filed\n\n## Dependencies\nDepends on the external review and signed releases. Closes M7."
+    },
+    {
+      "title": "Write the docker-compose for the full self-hostable stack",
+      "milestone": "M7",
+      "labels": [
+        "type:chore",
+        "area:infra",
+        "priority:P2",
+        "good-first-issue"
+      ],
+      "body": "## Description\nProvide `docker/` Compose files that bring up the whole self-hostable stack (registrar, casting service, trustee nodes, Postgres board, verifier, admin, voter app) so an operator can run a society-profile election locally with one command.\n\n## Acceptance criteria\n- [ ] `docker compose up` brings up the full society-profile stack\n- [ ] Services healthy and wired together with sane defaults\n- [ ] A documented quickstart runs a demo election end to end\n- [ ] Trustee nodes run as separate containers\n\n## Dependencies\nDepends on the registrar, casting service, board, and apps."
+    }
+  ]
+}
