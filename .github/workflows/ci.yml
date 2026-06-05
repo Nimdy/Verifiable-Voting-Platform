@@ -35,3 +35,22 @@ jobs:
         working-directory: playground
       - run: npm run build
         working-directory: playground
+
+  cross-verify:
+    name: Cross-language verify (TS transcript ↔ Python/libsodium)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Produce a transcript with the TypeScript engine
+        run: npm install && npm run demo
+        working-directory: reference
+      - name: Install libsodium + pysodium
+        run: sudo apt-get update && sudo apt-get install -y libsodium23 && pip install pysodium
+      - name: Independently verify the transcript (Python/libsodium)
+        run: python verifier/vvp-verify-py/vvp_verify.py reference/out/transcript.json

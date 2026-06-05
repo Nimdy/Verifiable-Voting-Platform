@@ -70,6 +70,12 @@ cryptographic mechanism — not by a vague appeal to "the blockchain."
 | **Recorded-as-cast** | The voter's encrypted ballot is on the public record, unaltered | A privacy-preserving **tracking commitment** + a Merkle **inclusion proof** against signed roots — reveals *nothing* about the choice |
 | **Counted-as-recorded** | The published tally is the honest count of the recorded ballots | **Homomorphic tally** (or a **verifiable mixnet**) + **threshold decryption** with public ZK proofs; an **independent verifier** re-checks everything |
 
+**Independent cross-language verification.** A published election is a single `transcript.json` that
+*anyone* re-checks from the public record alone. The repo ships **two independent verifiers** — the
+TypeScript reference and a [Python verifier on libsodium](verifier/vvp-verify-py) — and CI runs
+**both** on every push, so a bug in one implementation can't silently pass. Try it:
+`cd reference && npm run demo && npm run verify -- out/transcript.json`.
+
 A core principle throughout: **no voter ever receives a receipt that proves to a third party how
 they voted.** That is what makes vote-buying and coercion impossible-by-construction in the
 strong tiers — and it is precisely the property the original concept's "see your vote on the
