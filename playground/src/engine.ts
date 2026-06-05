@@ -3,9 +3,9 @@
 import {
   setupKeys, runElection, verifyTranscript, encryptSelection, auditSelection,
   issueCredential, sign, encrypt, proveBit, proveSumOne, addCiphertexts, randScalar, mod, N,
-  signingBytes, boardBytes, electionContext, BulletinBoard,
+  signingBytes, boardBytes, electionContext, BulletinBoard, Registrar,
   type Transcript, type VerifyResult, type KeySetup, type Voter, type Credential,
-  type BallotEntry, type Selection, type Point,
+  type VoterCredential, type BallotEntry, type Selection, type Point,
 } from '@engine';
 
 export type { Transcript, VerifyResult, KeySetup, Voter, Credential };
@@ -89,3 +89,32 @@ export const overvote = (t: Transcript, spare: Credential): Transcript => {
   const bs = [...t.ballots, makeBallot(ctx, spare, overvoteSelection(t.publicKey, t.candidates.length), 'overvoter')];
   return { ...t, ballots: bs, boardRoot: rootOf(ctx, bs) };
 };
+
+// ---- lifecycle walkthrough scenario (real artifacts, revealed step by step) -
+export const hexShort = (h: string, n = 14): string => (h.length > n ? h.slice(0, n) + '…' : h);
+export const ptShort = (p: Point, n = 14): string => hexShort(toHex(p.toRawBytes()), n);
+
+export interface Scenario {
+  contest: string;
+  candidates: string[];
+  keys: KeySetup;
+  registrar: Registrar;
+  packets: VoterCredential[];
+  voters: Voter[];
+  spare: Credential; // an eligible-but-unused credential (for the overvote demo)
+  transcript: Transcript;
+}
+
+/** Build one complete election with all the real intermediate artifacts the walkthrough reveals. */
+export function buildScenario(): Scenario {
+  const contest = 'Best team lunch? 🍽️';
+  const candidates = ['🌮 Tacos', '🍕 Pizza', '🍣 Sushi', '🥗 Salad'];
+  const keys = setupKeys(5, 3); // 5 trustees, any 3 decrypt
+  const registrar = new Registrar();
+  const packets = registrar.register(Array.from({ length: 8 }, (_, i) => ({ id: `citizen-${i + 1}` })));
+  const choices = [0, 1, 0, 2, 0, 3, 1]; // 7 of 8 registered actually vote
+  const voters: Voter[] = choices.map((choice, i) => ({ credential: packets[i]!.credential, choice }));
+  const spare = packets[7]!.credential; // registered but did not vote
+  const transcript = runElection(contest, candidates, voters, keys, registrar.publishedRoll(), [1, 3, 5]);
+  return { contest, candidates, keys, registrar, packets, voters, spare, transcript };
+}

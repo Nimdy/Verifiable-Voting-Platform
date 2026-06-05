@@ -4,6 +4,7 @@ import {
   tamperBallot, rigResult, doubleVote, ineligibleVote, overvote, TRUSTEES, THRESHOLD,
   type VerifyResult, type Transcript, type Voter, type Credential,
 } from './engine';
+import Walkthrough from './Walkthrough';
 
 const CANDIDATES = ['Tacos 🌮', 'Pizza 🍕', 'Sushi 🍣', 'Salad 🥗'];
 const BAR = ['bg-emerald-400', 'bg-indigo-400', 'bg-amber-400', 'bg-rose-400'];
@@ -41,7 +42,7 @@ function CheckRow({ ok, name, detail }: { ok: boolean; name: string; detail?: st
   );
 }
 
-export default function App() {
+function Playground() {
   const [contest, setContest] = useState('Best team lunch? 🍽️');
   const [keys] = useState(() => makeKeys());
   const [spare] = useState<Credential>(() => issueSpare()); // an eligible-but-unused voter, for the overvote demo
@@ -202,6 +203,21 @@ export default function App() {
           Runs entirely in your browser using the same audited crypto as the <code className="text-slate-400">reference/</code> core. Pre-audit demo — not for binding elections.
         </footer>
       </div>
+    </div>
+  );
+}
+
+export default function App() {
+  const [tab, setTab] = useState<'play' | 'walk'>('play');
+  const tabCls = (on: boolean) =>
+    `rounded-lg px-4 py-1.5 text-sm font-semibold ${on ? 'bg-indigo-500 text-white' : 'text-slate-300 hover:text-white'}`;
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-indigo-950 text-slate-100">
+      <nav className="sticky top-0 z-10 flex justify-center gap-2 border-b border-white/10 bg-slate-950/80 px-4 py-2 backdrop-blur">
+        <button onClick={() => setTab('play')} className={tabCls(tab === 'play')}>🎮 Playground</button>
+        <button onClick={() => setTab('walk')} className={tabCls(tab === 'walk')}>🔬 How it works</button>
+      </nav>
+      {tab === 'play' ? <Playground /> : <Walkthrough />}
     </div>
   );
 }
