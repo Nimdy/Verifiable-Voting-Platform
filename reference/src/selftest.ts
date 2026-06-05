@@ -6,8 +6,14 @@ import { G, N, ZERO, mod, mul, randScalar, scalarTo32 } from './group.js';
 import {
   addCiphertexts, combinePublicKey, decryptionShare, discreteLog, encrypt, trusteeKeygen,
 } from './elgamal.js';
-import { proveBit, verifyBit, proveDecryption, verifyDecryption } from './proofs.js';
+import {
+  proveBit, verifyBit, proveDecryption, verifyDecryption, proveSumOne, verifySumOne,
+} from './proofs.js';
 import { issueCredential, sign, verifySig } from './credentials.js';
+import {
+  setupTrustees, runElection, encryptSelection, auditSelection, type Voter,
+} from './election.js';
+import { verifyTranscript } from './verify.js';
 
 let pass = 0;
 let fail = 0;
@@ -86,6 +92,86 @@ for (let i = 0; i < 200; i++) {
   check(!verifySig(issueCredential().pub, msg, sig), 'signature under wrong key rejected');
   check(!verifySig(cred.pub, msg, { R: sig.R, s: mod(sig.s + 1n, N) }), 'mutated s rejected');
   check(!verifySig(cred.pub, msg, { R: sig.R.add(G), s: sig.s }), 'mutated R rejected');
+}
+
+// 7. Multi-candidate selections: honest verifies; over/under-votes and tampering rejected.
+for (let i = 0; i < 150; i++) {
+  const K = 2 + Math.floor(Math.random() * 5); // 2..6 candidates
+  const choice = Math.floor(Math.random() * K);
+  const { selection, randomness } = encryptSelection(h, choice, K);
+  const bitsOk = selection.enc.every((ct, j) => verifyBit(h, ct, selection.bitProofs[j]!));
+  check(bitsOk, 'all candidate bit-proofs verify');
+  check(verifySumOne(h, addCiphertexts(selection.enc), selection.sumProof), 'exactly-one proof verifies');
+  check(auditSelection(h, selection, randomness, choice), 'Benaloh audit passes for the real choice');
+  check(!auditSelection(h, selection, randomness, (choice + 1) % K), 'Benaloh audit fails for a different choice');
+
+  // Overvote: select two candidates → sum is 2 → exactly-one proof must fail.
+  const enc = [], rs: bigint[] = [];
+  for (let j = 0; j < K; j++) {
+    const v: 0 | 1 = j < 2 ? 1 : 0;
+    const r = randScalar();
+    enc.push(encrypt(h, BigInt(v), r)); rs.push(r);
+  }
+  const R = rs.reduce((a, b) => mod(a + b, N), 0n);
+  check(!verifySumOne(h, addCiphertexts(enc), proveSumOne(h, addCiphertexts(enc), R)), 'overvote (sum=2) rejected');
+
+  // Undervote: select none → sum is 0 → exactly-one proof must fail.
+  const z = Array.from({ length: K }, () => { const r = randScalar(); return { ct: encrypt(h, 0n, r), r }; });
+  const Rz = z.reduce((a, b) => mod(a + b.r, N), 0n);
+  check(!verifySumOne(h, addCiphertexts(z.map((x) => x.ct)), proveSumOne(h, addCiphertexts(z.map((x) => x.ct)), Rz)), 'undervote (sum=0) rejected');
+
+  // Mutated exactly-one proof rejected.
+  const sp = selection.sumProof;
+  check(!verifySumOne(h, addCiphertexts(selection.enc), { ...sp, s: mod(sp.s + 1n, N) }), 'mutated sum proof rejected');
+}
+
+// 8. End-to-end multi-candidate elections verify and report the true counts.
+for (let trial = 0; trial < 20; trial++) {
+  const K = 2 + Math.floor(Math.random() * 4);
+  const candidates = Array.from({ length: K }, (_, j) => `c${j}`);
+  const nVoters = 1 + Math.floor(Math.random() * 10);
+  const ts = setupTrustees(1 + Math.floor(Math.random() * 3));
+  const roll = Array.from({ length: nVoters }, () => issueCredential());
+  const choices = Array.from({ length: nVoters }, () => Math.floor(Math.random() * K));
+  const voters: Voter[] = roll.map((credential, i) => ({ credential, choice: choices[i]! }));
+  const t = runElection('c', candidates, voters, ts, roll.map((c) => c.pub));
+  const r = verifyTranscript(t);
+  check(r.ok, `end-to-end election verifies (trial ${trial})`);
+  const expected = candidates.map((_, j) => choices.filter((c) => c === j).length);
+  check(JSON.stringify(t.results) === JSON.stringify(expected), `tallies match plaintext (trial ${trial})`);
+}
+
+// 9. Verifier robustness: malformed transcripts REJECT (never throw); audits check proofs; range guards.
+{
+  const K = 3;
+  const cands = ['a', 'b', 'c'];
+  const ts = setupTrustees(2);
+  const roll = [issueCredential(), issueCredential(), issueCredential()];
+  const voters: Voter[] = roll.map((credential, i) => ({ credential, choice: i % K }));
+  const base = runElection('e', cands, voters, ts, roll.map((c) => c.pub));
+
+  const noThrow = (fn: () => boolean): boolean | 'threw' => { try { return fn(); } catch { return 'threw'; } };
+
+  check(noThrow(() => verifyTranscript({ ...base, aggregates: base.aggregates.slice(0, K - 1) }).ok) === false,
+    'verifier rejects truncated aggregates without throwing');
+
+  const shortBallots = base.ballots.map((b, i) => i === 0
+    ? { ...b, selection: { ...b.selection, enc: b.selection.enc.slice(0, K - 1), bitProofs: b.selection.bitProofs.slice(0, K - 1) } }
+    : b);
+  check(noThrow(() => verifyTranscript({ ...base, ballots: shortBallots }).ok) === false,
+    'verifier rejects a short ballot (K mismatch) without throwing');
+
+  check(noThrow(() => verifyTranscript({ ...base, decShares: base.decShares.map((d) => ({ ...d, shares: d.shares.slice(0, 1) })) }).ok) === false,
+    'verifier rejects truncated decryption shares without throwing');
+
+  let rangeThrew = false;
+  try { encryptSelection(base.publicKey, 99, K); } catch { rangeThrew = true; }
+  check(rangeThrew, 'encryptSelection rejects an out-of-range choice');
+
+  const good = encryptSelection(base.publicKey, 1, K);
+  check(auditSelection(base.publicKey, good.selection, good.randomness, 1), 'audit passes for a fully valid ballot');
+  const corrupt = { ...good.selection, bitProofs: good.selection.bitProofs.map((p, j) => (j === 0 ? { ...p, s0: mod(p.s0 + 1n, N) } : p)) };
+  check(!auditSelection(base.publicKey, corrupt, good.randomness, 1), 'audit fails when a bit proof is invalid');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);

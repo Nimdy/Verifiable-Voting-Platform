@@ -1,18 +1,17 @@
-// End-to-end demo: register eligible voters, run a real verifiable election, then
-// play the INSIDER and try to cheat six different ways — and watch the independent
-// verifier catch every one. Run with:  npm run demo
-//
-// Thesis on display: only eligible people vote, once each; count the votes; reveal
-// no one's ballot; make cheating impossible to hide.
+// End-to-end demo: register eligible voters, run a real MULTI-CANDIDATE verifiable
+// election, audit a ballot (cast-as-intended), then play the INSIDER and try to
+// cheat seven ways — and watch the independent verifier catch every one.
+// Run with:  npm run demo
 
-import { encrypt } from './elgamal.js';
-import { proveBit, verifyBit } from './proofs.js';
-import { randScalar, type Point } from './group.js';
+import { encrypt, addCiphertexts } from './elgamal.js';
+import { proveBit, proveSumOne } from './proofs.js';
+import { randScalar, mod, N, type Point } from './group.js';
 import { issueCredential, registerVoters, sign, type Credential } from './credentials.js';
-import { signingBytes, boardBytes } from './codec.js';
+import { signingBytes, boardBytes, electionContext } from './codec.js';
 import { BulletinBoard } from './bulletin.js';
 import {
-  setupTrustees, runElection, singleTrusteeAttempt, type Transcript, type Voter, type BallotEntry,
+  setupTrustees, runElection, encryptSelection, auditSelection, singleTrusteeAttempt,
+  type Transcript, type Voter, type BallotEntry, type Selection,
 } from './election.js';
 import { verifyTranscript, type VerifyResult } from './verify.js';
 
@@ -25,90 +24,89 @@ function report(label: string, r: VerifyResult): void {
   console.log(`   ${r.ok ? '🟢 VERIFIED' : '🔴 REJECTED'} — ${label}\n`);
 }
 
-// Rebuild the board root over a ballot set (so an attack can present a *consistent*
-// transcript and we isolate exactly which check catches the cheating).
-function rootOf(ballots: BallotEntry[]): string {
+function rootOf(ctx: Uint8Array, ballots: BallotEntry[]): string {
   const board = new BulletinBoard();
-  for (const b of ballots) board.append(boardBytes(b.credentialPub, b.ct, b.proof, b.sig));
+  for (const b of ballots) board.append(boardBytes(ctx, b.credentialPub, b.selection, b.sig));
   return board.root();
 }
 
-// Forge a fresh signed ballot for a given credential and vote (used by attackers).
-function makeBallot(cred: Credential, vote: 0 | 1, pk: Point, label: string): BallotEntry {
-  const r = randScalar();
-  const ct = encrypt(pk, BigInt(vote), r);
-  const proof = proveBit(pk, ct, vote, r);
-  const sig = sign(cred.secret, signingBytes(ct, proof));
-  return { voter: label, credentialPub: cred.pub, ct, proof, sig };
+function makeBallot(ctx: Uint8Array, cred: Credential, selection: Selection, label: string): BallotEntry {
+  const sig = sign(cred.secret, signingBytes(ctx, selection));
+  return { voter: label, credentialPub: cred.pub, selection, sig };
+}
+
+/** A malicious "overvote": select TWO candidates (each a valid bit, but the sum is 2). */
+function overvoteSelection(pk: Point, K: number): Selection {
+  const enc = [], bitProofs = [], rs: bigint[] = [];
+  for (let j = 0; j < K; j++) {
+    const v: 0 | 1 = j === 0 || j === 1 ? 1 : 0;
+    const r = randScalar();
+    const ct = encrypt(pk, BigInt(v), r);
+    enc.push(ct); bitProofs.push(proveBit(pk, ct, v, r)); rs.push(r);
+  }
+  const R = rs.reduce((a, b) => mod(a + b, N), 0n);
+  return { enc, bitProofs, sumProof: proveSumOne(pk, addCiphertexts(enc), R) };
 }
 
 line('━');
 console.log('  VERIFIABLE VOTING — reference proof of concept');
-console.log('  "Only eligible voters, once each. Verify everything. Reveal nothing."');
+console.log('  "One eligible voter, one vote. Verify everything. Reveal nothing."');
 line('━');
 
-// ---------------------------------------------------------------------------
-// Setup: 3 trustees jointly hold the key. The registrar issues 7 eligible
-// credentials. 7 voters cast a yes/no ballot. True result: 4 YES, 3 NO.
-// ---------------------------------------------------------------------------
+const CANDIDATES = ['Tacos 🌮', 'Pizza 🍕', 'Sushi 🍣', 'Salad 🥗'];
+const K = CANDIDATES.length;
 const trustees = setupTrustees(3);
-const roll = registerVoters(7); // the registrar's published eligible roll
+const roll = registerVoters(9); // 7 vote; 2 spare eligible credentials for attackers
 const eligibleRoll = roll.map((c) => c.pub);
-const choices: (0 | 1)[] = [1, 0, 1, 1, 0, 1, 0]; // 4 YES, 3 NO
-const voters: Voter[] = roll.map((credential, i) => ({ credential, vote: choices[i]! }));
-const truth = choices.filter((v) => v === 1).length;
+const choices = [0, 1, 0, 2, 0, 3, 1]; // Tacos×3, Pizza×2, Sushi×1, Salad×1
+const voters: Voter[] = choices.map((choice, i) => ({ credential: roll[i]!, choice }));
 
-console.log(`\nContest: "Adopt Proposal 1?"   Options: [No, Yes]`);
-console.log(`Trustees: ${trustees.length}   Eligible voters registered: ${roll.length}`);
-console.log(`Voters: ${voters.length}   (ground truth: ${truth} YES / ${voters.length - truth} NO)\n`);
+console.log(`\nContest: "Best team lunch?"   Candidates: ${CANDIDATES.join(', ')}`);
+console.log(`Trustees: ${trustees.length}   Eligible voters: ${roll.length}   Voters: ${voters.length}\n`);
 
-const transcript = runElection('Adopt Proposal 1?', ['No', 'Yes'], voters, trustees, eligibleRoll);
-console.log(`Bulletin-board root: ${transcript.boardRoot.slice(0, 32)}…`);
-console.log(`Authority announces: ${transcript.claimedTally} YES\n`);
+const t = runElection('Best team lunch?', CANDIDATES, voters, trustees, eligibleRoll);
+const ctx = electionContext(t.contest, t.publicKey, t.candidates);
+console.log('Announced results: ' + CANDIDATES.map((c, j) => `${c} ${t.results[j]}`).join('   ') + '\n');
 
 line();
 console.log('1) HONEST ELECTION — anyone re-verifies it from the transcript alone:');
 line();
-report('the published result is provably correct', verifyTranscript(transcript));
+report('the published result is provably correct', verifyTranscript(t));
 
-// ---------------------------------------------------------------------------
-console.log('2) BALLOT SECRECY — a lone trustee tries to unmask one voter:');
+console.log('2) BALLOT SECRECY — a lone trustee tries to unmask one ciphertext:');
 line();
-const sneaky = singleTrusteeAttempt(transcript.ballots[1]!.ct, trustees[0]!, transcript.numVoters);
-console.log(`   Trustee #1 alone tries to decrypt voter-2's ballot → ${sneaky === null ? '❌ FAILED' : `recovered ${sneaky}`}`);
-console.log('   ✅ No single trustee can read any ballot. Only the TOTAL is ever decrypted.\n');
+const sneaky = singleTrusteeAttempt(t.ballots[0]!.selection.enc[0]!, trustees[0]!, t.numVoters);
+console.log(`   Trustee #1 alone tries to read a ballot value → ${sneaky === null ? '❌ FAILED' : `got ${sneaky}`}`);
+console.log('   ✅ No single trustee can read any ballot. Only per-candidate TOTALS are decrypted.\n');
 
-// ---------------------------------------------------------------------------
-console.log('3) DOUBLE VOTE — voter-1 tries to vote a second time with the same credential:');
+console.log('3) CAST-AS-INTENDED — a voter audits (spoils) a ballot to check their device:');
 line();
-const dbl: BallotEntry[] = [...transcript.ballots, makeBallot(roll[0]!, 1, transcript.publicKey, 'voter-1-again')];
-const attackDouble: Transcript = { ...transcript, ballots: dbl, boardRoot: rootOf(dbl) };
-report('the same credential cannot be used twice', verifyTranscript(attackDouble));
+const audited = encryptSelection(t.publicKey, 2, K); // device claims to encrypt "Sushi"
+console.log(`   Honest device encrypted the chosen candidate?  ${auditSelection(t.publicKey, audited.selection, audited.randomness, 2) ? '✅ YES' : '❌ NO'}`);
+console.log(`   Would a device that secretly encrypted a DIFFERENT candidate pass?  ${auditSelection(t.publicKey, audited.selection, audited.randomness, 0) ? '🔴 YES' : '✅ NO'}`);
+console.log('   ✅ A spoiled ballot is discarded; a cheating device cannot predict an audit.\n');
 
-// ---------------------------------------------------------------------------
-console.log('4) INELIGIBLE VOTER — someone not on the roll forges a credential and votes:');
+console.log('4) DOUBLE VOTE — voter-1 votes again with the same credential:');
 line();
-const outsider = issueCredential(); // never registered
-const inel: BallotEntry[] = [...transcript.ballots, makeBallot(outsider, 1, transcript.publicKey, 'gate-crasher')];
-const attackIneligible: Transcript = { ...transcript, ballots: inel, boardRoot: rootOf(inel) };
-report('only credentials on the published roll may vote', verifyTranscript(attackIneligible));
+const dbl = [...t.ballots, makeBallot(ctx, roll[0]!, encryptSelection(t.publicKey, 1, K).selection, 'voter-1-again')];
+report('the same credential cannot be used twice', verifyTranscript({ ...t, ballots: dbl, boardRoot: rootOf(ctx, dbl) }));
 
-// ---------------------------------------------------------------------------
-console.log('5) BALLOT STUFFING — a voter tries to cast "10" instead of 0 or 1:');
+console.log('5) INELIGIBLE VOTER — someone not on the roll forges a credential and votes:');
 line();
-const r = randScalar();
-const stuffed = encrypt(transcript.publicKey, 10n, r);
-const accepted = verifyBit(transcript.publicKey, stuffed, proveBit(transcript.publicKey, stuffed, 1, r));
-console.log(`   Forged validity proof for an illegal vote accepted? ${accepted ? '🔴 YES' : '✅ NO'}`);
-console.log('   ✅ Only genuine 0/1 ballots can ever produce a valid proof.\n');
+const inel = [...t.ballots, makeBallot(ctx, issueCredential(), encryptSelection(t.publicKey, 0, K).selection, 'gate-crasher')];
+report('only credentials on the published roll may vote', verifyTranscript({ ...t, ballots: inel, boardRoot: rootOf(ctx, inel) }));
 
-// ---------------------------------------------------------------------------
-console.log('6) RIGGED RESULT — a corrupt authority announces a fake landslide:');
+console.log('6) OVERVOTE — an eligible voter tries to vote for TWO candidates at once:');
 line();
-const attackRig: Transcript = { ...transcript, claimedTally: transcript.numVoters };
-report('the verifier recomputes the real tally and rejects the lie', verifyTranscript(attackRig));
+const over = [...t.ballots, makeBallot(ctx, roll[7]!, overvoteSelection(t.publicKey, K), 'overvoter')];
+report('a ballot must select exactly one candidate', verifyTranscript({ ...t, ballots: over, boardRoot: rootOf(ctx, over) }));
+
+console.log('7) RIGGED RESULT — a corrupt authority pads a candidate\'s total:');
+line();
+const rigged = { ...t, results: t.results.map((n, j) => (j === 0 ? n + 2 : n)) };
+report('the verifier recomputes the real totals and rejects the lie', verifyTranscript(rigged));
 
 line('━');
 console.log('  Summary: the honest election verifies; every insider attack is caught.');
-console.log('  Eligibility + one-vote-per-credential + secrecy + verifiable tally.');
+console.log('  Eligibility · one-vote-per-credential · one-candidate-per-ballot · secrecy · verifiable tally.');
 line('━');

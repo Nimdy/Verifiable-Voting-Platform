@@ -122,3 +122,39 @@ export function verifyDecryption(a: Point, pub: Point, share: Point, p: DecProof
   if (!mul(a, p.s).equals(p.Ta.add(mul(share, p.c)))) return false; // a^s == Ta · share^c
   return true;
 }
+
+// ---------------------------------------------------------------------------
+// 3. Exactly-one-selected: proof that the homomorphic SUM of a contest's
+//    per-candidate ciphertexts encrypts exactly 1 — i.e. the voter selected
+//    exactly one candidate. Combined with each ciphertext being a 0/1 bit
+//    (proveBit), this pins the ballot to a single valid selection.
+//
+//    The prover knows R = Σ r_j (the sum of the per-candidate randomness), so
+//    this is a Chaum–Pedersen proof that  agg.a = g^R  and  agg.b − g = h^R.
+// ---------------------------------------------------------------------------
+
+export interface SumProof {
+  Tg: Point;
+  Th: Point;
+  c: bigint;
+  s: bigint;
+}
+
+export function proveSumOne(h: Point, agg: Ciphertext, R: bigint): SumProof {
+  const t = randScalar();
+  const Tg = mul(G, t);
+  const Th = mul(h, t);
+  const c = hashToScalar('sum-one', [h, agg.a, agg.b, Tg, Th]);
+  const s = mod(t + c * R, N);
+  return { Tg, Th, c, s };
+}
+
+export function verifySumOne(h: Point, agg: Ciphertext, p: SumProof): boolean {
+  if (!inRange(p.c) || !inRange(p.s)) return false;
+  const target = agg.b.subtract(G); // equals h^R iff Σ votes == 1
+  const c = hashToScalar('sum-one', [h, agg.a, agg.b, p.Tg, p.Th]);
+  if (c !== p.c) return false;
+  if (!mul(G, p.s).equals(p.Tg.add(mul(agg.a, p.c)))) return false; // g^s == Tg · agg.a^c
+  if (!mul(h, p.s).equals(p.Th.add(mul(target, p.c)))) return false; // h^s == Th · (agg.b − g)^c
+  return true;
+}
