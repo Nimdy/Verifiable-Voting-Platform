@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import {
-  makeTrustees, issueSpare, newVoter, tally, verify, ballotCipher, auditCheck,
-  tamperBallot, rigResult, doubleVote, ineligibleVote, overvote,
+  makeKeys, issueSpare, newVoter, tally, verify, ballotCipher, auditCheck,
+  tamperBallot, rigResult, doubleVote, ineligibleVote, overvote, TRUSTEES, THRESHOLD,
   type VerifyResult, type Transcript, type Voter, type Credential,
 } from './engine';
 
@@ -43,7 +43,7 @@ function CheckRow({ ok, name, detail }: { ok: boolean; name: string; detail?: st
 
 export default function App() {
   const [contest, setContest] = useState('Best team lunch? 🍽️');
-  const [trustees] = useState(() => makeTrustees(3));
+  const [keys] = useState(() => makeKeys());
   const [spare] = useState<Credential>(() => issueSpare()); // an eligible-but-unused voter, for the overvote demo
   const [voters, setVoters] = useState<Voter[]>([]);
   const [revealed, setRevealed] = useState(false);
@@ -51,8 +51,8 @@ export default function App() {
   const [auditFor, setAuditFor] = useState<number | null>(null);
 
   const transcript: Transcript | null = useMemo(
-    () => (voters.length ? tally(contest, CANDIDATES, voters, trustees, [spare.pub]) : null),
-    [voters, trustees, contest, spare],
+    () => (voters.length ? tally(contest, CANDIDATES, voters, keys, [spare.pub]) : null),
+    [voters, keys, contest, spare],
   );
   const result = useMemo(() => (revealed && transcript ? verify(transcript) : null), [revealed, transcript]);
   const maxVotes = transcript ? Math.max(1, ...((result?.results ?? transcript.results) ?? [])) : 1;
@@ -198,6 +198,7 @@ export default function App() {
         </div>
 
         <footer className="mt-10 text-center text-xs text-slate-500">
+          🔑 The decryption key is split across {TRUSTEES} trustees — <strong>any {THRESHOLD}</strong> can decrypt the totals, none alone.<br />
           Runs entirely in your browser using the same audited crypto as the <code className="text-slate-400">reference/</code> core. Pre-audit demo — not for binding elections.
         </footer>
       </div>

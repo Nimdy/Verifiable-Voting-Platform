@@ -1,19 +1,23 @@
 // Thin UI wrapper over the EXACT audited protocol from ../reference.
 // No crypto is reimplemented here — we only orchestrate and format.
 import {
-  setupTrustees, runElection, verifyTranscript, encryptSelection, auditSelection,
+  setupKeys, runElection, verifyTranscript, encryptSelection, auditSelection,
   issueCredential, sign, encrypt, proveBit, proveSumOne, addCiphertexts, randScalar, mod, N,
   signingBytes, boardBytes, electionContext, BulletinBoard,
-  type Transcript, type VerifyResult, type TrusteeKey, type Voter, type Credential,
+  type Transcript, type VerifyResult, type KeySetup, type Voter, type Credential,
   type BallotEntry, type Selection, type Point,
 } from '@engine';
 
-export type { Transcript, VerifyResult, TrusteeKey, Voter, Credential };
+export type { Transcript, VerifyResult, KeySetup, Voter, Credential };
+
+/** 3 trustees; ANY 2 can decrypt (survives one offline/malicious trustee). */
+export const TRUSTEES = 3;
+export const THRESHOLD = 2;
 
 const toHex = (b: Uint8Array): string =>
   Array.from(b).map((x) => x.toString(16).padStart(2, '0')).join('');
 
-export const makeTrustees = (n: number): TrusteeKey[] => setupTrustees(n);
+export const makeKeys = (): KeySetup => setupKeys(TRUSTEES, THRESHOLD);
 export const issueSpare = (): Credential => issueCredential();
 export const newVoter = (choice: number): Voter => ({ credential: issueCredential(), choice });
 
@@ -21,10 +25,10 @@ export const tally = (
   contest: string,
   candidates: string[],
   voters: Voter[],
-  trustees: TrusteeKey[],
+  keys: KeySetup,
   extraEligible: Point[],
 ): Transcript =>
-  runElection(contest, candidates, voters, trustees, [...voters.map((v) => v.credential.pub), ...extraEligible]);
+  runElection(contest, candidates, voters, keys, [...voters.map((v) => v.credential.pub), ...extraEligible]);
 
 export const verify = (t: Transcript): VerifyResult => verifyTranscript(t);
 
