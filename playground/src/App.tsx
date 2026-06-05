@@ -1,15 +1,20 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import {
-  makeTrustees, tally, verify, ballotCipher, yesCount, noCount,
-  tamperBallot, rigResult, stuffingAccepted,
-  type VerifyResult, type Transcript,
+  makeTrustees, newVoter, tally, verify, ballotCipher, yesCount, noCount,
+  tamperBallot, rigResult, doubleVote, ineligibleVote, stuffingAccepted,
+  type VerifyResult, type Transcript, type Voter,
 } from './engine';
 
-const OPTIONS: [string, string] = ['No', 'Yes'];
-
 type CheatOutcome =
-  | { kind: 'tamper' | 'rig'; result: VerifyResult }
+  | { kind: 'tamper' | 'rig' | 'double' | 'ineligible'; result: VerifyResult }
   | { kind: 'stuff'; accepted: boolean };
+
+const CHEAT_MSG: Record<Exclude<CheatOutcome['kind'], 'stuff'>, string> = {
+  tamper: 'Altering a ballot breaks the Merkle root and its proof.',
+  rig: 'The verifier recomputed the real tally — the lie does not match.',
+  double: 'The same credential cannot vote twice (single-use nullifier).',
+  ineligible: 'Only credentials on the published roll may vote.',
+};
 
 function Card(props: { step: string; title: string; children: ReactNode }) {
   return (
@@ -40,43 +45,55 @@ function CheckRow({ ok, name, detail }: { ok: boolean; name: string; detail?: st
 export default function App() {
   const [question, setQuestion] = useState('Should 🌮 Taco Tuesday be official?');
   const [trustees] = useState(() => makeTrustees(3));
-  const [votes, setVotes] = useState<(0 | 1)[]>([]);
+  const [voters, setVoters] = useState<Voter[]>([]);
   const [revealed, setRevealed] = useState(false);
   const [cheat, setCheat] = useState<CheatOutcome | null>(null);
 
   const transcript: Transcript | null = useMemo(
-    () => (votes.length ? tally(question, OPTIONS, votes, trustees) : null),
-    [votes, trustees, question],
+    () => (voters.length ? tally(question, voters, trustees) : null),
+    [voters, trustees, question],
   );
   const result = useMemo(
     () => (revealed && transcript ? verify(transcript) : null),
     [revealed, transcript],
   );
 
-  const cast = (v: 0 | 1) => { setVotes((p) => [...p, v]); setRevealed(false); setCheat(null); };
+  const cast = (v: 0 | 1) => { setVoters((p) => [...p, newVoter(v)]); setRevealed(false); setCheat(null); };
   const simulate = () => {
-    const n = 7;
-    setVotes(Array.from({ length: n }, () => (Math.random() < 0.55 ? 1 : 0)));
+    setVoters(Array.from({ length: 7 }, () => newVoter(Math.random() < 0.55 ? 1 : 0)));
     setRevealed(false); setCheat(null);
   };
-  const reset = () => { setVotes([]); setRevealed(false); setCheat(null); };
+  const reset = () => { setVoters([]); setRevealed(false); setCheat(null); };
 
   const runCheat = (kind: CheatOutcome['kind']) => {
     if (!transcript) return;
-    if (kind === 'tamper') setCheat({ kind, result: verify(tamperBallot(transcript, 0)) });
+    if (kind === 'tamper') setCheat({ kind, result: verify(tamperBallot(transcript)) });
     else if (kind === 'rig') setCheat({ kind, result: verify(rigResult(transcript)) });
-    else setCheat({ kind, accepted: stuffingAccepted(transcript) });
+    else if (kind === 'double') setCheat({ kind, result: verify(doubleVote(transcript, voters)) });
+    else if (kind === 'ineligible') setCheat({ kind, result: verify(ineligibleVote(transcript)) });
+    else setCheat({ kind: 'stuff', accepted: stuffingAccepted(transcript) });
   };
+
+  const cheatBtn = (kind: CheatOutcome['kind'], label: string) => (
+    <button
+      disabled={!transcript}
+      onClick={() => runCheat(kind)}
+      className="rounded-lg bg-rose-600/80 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-500 disabled:bg-slate-700 disabled:text-slate-500"
+    >
+      {label}
+    </button>
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-indigo-950 text-slate-100">
       <div className="mx-auto max-w-3xl px-5 py-10">
-        {/* Hero */}
         <header className="mb-8 text-center">
           <h1 className="bg-gradient-to-r from-indigo-300 to-emerald-300 bg-clip-text text-4xl font-extrabold text-transparent">
             🗳️ Verifiable Voting
           </h1>
-          <p className="mt-2 text-lg font-medium text-slate-200">Verify everything. Reveal nothing.</p>
+          <p className="mt-2 text-lg font-medium text-slate-200">
+            One eligible voter, one vote. Verify everything. Reveal nothing.
+          </p>
           <p className="mt-1 text-sm text-slate-400">
             No insider can cheat without getting caught — and you can prove it yourself, right here.
           </p>
@@ -84,11 +101,11 @@ export default function App() {
 
         <div className="space-y-5">
           {/* 1 — vote */}
-          <Card step="1" title="Ask a question, collect votes">
+          <Card step="1" title="Register voters & collect votes">
             <input
               value={question}
               onChange={(e) => { setQuestion(e.target.value); setRevealed(false); }}
-              className="mb-4 w-full rounded-lg border border-white/10 bg-slate-800/60 px-3 py-2 text-sm text-white outline-none focus:border-indigo-400"
+              className="mb-3 w-full rounded-lg border border-white/10 bg-slate-800/60 px-3 py-2 text-sm text-white outline-none focus:border-indigo-400"
             />
             <div className="flex flex-wrap items-center gap-2">
               <button onClick={() => cast(1)} className="rounded-lg bg-emerald-500/90 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-400">
@@ -100,13 +117,15 @@ export default function App() {
               <button onClick={simulate} className="rounded-lg bg-indigo-500/80 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400">
                 🎲 Simulate 7 voters
               </button>
-              {votes.length > 0 && (
-                <button onClick={reset} className="rounded-lg px-3 py-2 text-sm text-slate-400 hover:text-white">
-                  reset
-                </button>
+              {voters.length > 0 && (
+                <button onClick={reset} className="rounded-lg px-3 py-2 text-sm text-slate-400 hover:text-white">reset</button>
               )}
-              <span className="ml-auto text-sm text-slate-400">{votes.length} ballot(s) cast</span>
+              <span className="ml-auto text-sm text-slate-400">{voters.length} eligible voter(s)</span>
             </div>
+            <p className="mt-3 text-xs text-slate-500">
+              Each vote issues a fresh eligible-voter credential and is cryptographically signed — so only registered
+              voters count, and only once each.
+            </p>
           </Card>
 
           {/* 2 — bulletin board */}
@@ -119,7 +138,8 @@ export default function App() {
                   {transcript.ballots.slice(0, 8).map((_, i) => (
                     <li key={i} className="flex gap-3">
                       <span className="text-slate-500">{transcript.ballots[i]!.voter}</span>
-                      <span className="truncate text-indigo-300">{ballotCipher(transcript, i).slice(0, 44)}…</span>
+                      <span className="text-emerald-500/80">✔ eligible</span>
+                      <span className="truncate text-indigo-300">{ballotCipher(transcript, i).slice(0, 38)}…</span>
                     </li>
                   ))}
                   {transcript.ballots.length > 8 && (
@@ -127,8 +147,8 @@ export default function App() {
                   )}
                 </ul>
                 <p className="mt-3 rounded-lg bg-amber-400/10 px-3 py-2 text-xs text-amber-200">
-                  👆 This is <strong>all</strong> the public ever sees. Every vote is encrypted — yet the result is still
-                  provable. Merkle root: <span className="font-mono">{transcript.boardRoot.slice(0, 24)}…</span>
+                  👆 This is <strong>all</strong> the public ever sees: signed, encrypted ballots. The result is still
+                  provable, yet no choice is exposed. Merkle root: <span className="font-mono">{transcript.boardRoot.slice(0, 24)}…</span>
                 </p>
               </>
             )}
@@ -171,15 +191,11 @@ export default function App() {
           {/* 4 — cheat */}
           <Card step="4" title="Now try to cheat it (you're the insider)">
             <div className="flex flex-wrap gap-2">
-              <button disabled={!transcript} onClick={() => runCheat('tamper')} className="rounded-lg bg-rose-600/80 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-500 disabled:bg-slate-700 disabled:text-slate-500">
-                😈 Flip a stored ballot
-              </button>
-              <button disabled={!transcript} onClick={() => runCheat('stuff')} className="rounded-lg bg-rose-600/80 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-500 disabled:bg-slate-700 disabled:text-slate-500">
-                😈 Stuff a fake vote
-              </button>
-              <button disabled={!transcript} onClick={() => runCheat('rig')} className="rounded-lg bg-rose-600/80 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-500 disabled:bg-slate-700 disabled:text-slate-500">
-                😈 Rig the result
-              </button>
+              {cheatBtn('double', '😈 Vote twice')}
+              {cheatBtn('ineligible', '😈 Vote without a credential')}
+              {cheatBtn('tamper', '😈 Flip a stored ballot')}
+              {cheatBtn('stuff', '😈 Stuff a fake vote')}
+              {cheatBtn('rig', '😈 Rig the result')}
             </div>
             {cheat && (
               <div className="mt-4 rounded-lg bg-slate-800/60 p-4">
@@ -194,11 +210,7 @@ export default function App() {
                     <ul className="space-y-1">
                       {cheat.result.checks.map((c, i) => <CheckRow key={i} {...c} />)}
                     </ul>
-                    <p className="mt-3 text-sm font-semibold text-rose-300">
-                      🔴 Caught. {cheat.kind === 'tamper'
-                        ? 'Altering a ballot breaks the Merkle root and its proof.'
-                        : 'The verifier recomputed the real tally and the lie does not match.'}
-                    </p>
+                    <p className="mt-3 text-sm font-semibold text-rose-300">🔴 Caught. {CHEAT_MSG[cheat.kind]}</p>
                   </>
                 )}
               </div>
