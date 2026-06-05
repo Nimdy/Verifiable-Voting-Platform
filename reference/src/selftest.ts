@@ -2,11 +2,12 @@
 // for a formal audit — but it catches the obvious ways ZK proofs go wrong
 // (forgeable proofs, malleable proofs, wrong tallies). Run: npm run selftest
 
-import { G, N, ZERO, mod, mul, randScalar } from './group.js';
+import { G, N, ZERO, mod, mul, randScalar, scalarTo32 } from './group.js';
 import {
   addCiphertexts, combinePublicKey, decryptionShare, discreteLog, encrypt, trusteeKeygen,
 } from './elgamal.js';
 import { proveBit, verifyBit, proveDecryption, verifyDecryption } from './proofs.js';
+import { issueCredential, sign, verifySig } from './credentials.js';
 
 let pass = 0;
 let fail = 0;
@@ -73,6 +74,18 @@ for (let i = 0; i < 200; i++) {
   check(verifyDecryption(a, pub, share, proveDecryption(a, pub, share, x)), 'honest decryption verifies');
   const wrong = share.add(G);
   check(!verifyDecryption(a, pub, wrong, proveDecryption(a, pub, wrong, x)), 'cannot prove a wrong share');
+}
+
+// 6. Credential signatures: honest verifies; wrong message, wrong key, and any mutation rejected.
+for (let i = 0; i < 200; i++) {
+  const cred = issueCredential();
+  const msg = scalarTo32(randScalar());
+  const sig = sign(cred.secret, msg);
+  check(verifySig(cred.pub, msg, sig), 'honest signature verifies');
+  check(!verifySig(cred.pub, scalarTo32(randScalar()), sig), 'signature over wrong message rejected');
+  check(!verifySig(issueCredential().pub, msg, sig), 'signature under wrong key rejected');
+  check(!verifySig(cred.pub, msg, { R: sig.R, s: mod(sig.s + 1n, N) }), 'mutated s rejected');
+  check(!verifySig(cred.pub, msg, { R: sig.R.add(G), s: sig.s }), 'mutated R rejected');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);
