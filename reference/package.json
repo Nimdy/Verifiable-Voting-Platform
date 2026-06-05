@@ -1,0 +1,21 @@
+{
+  "name": "@vvp/reference",
+  "private": true,
+  "type": "module",
+  "version": "0.0.1",
+  "description": "Executable reference implementation of the verifiable-voting protocol (proof of concept).",
+  "scripts": {
+    "demo": "tsx src/demo.ts",
+    "selftest": "tsx src/selftest.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@noble/curves": "^1.7.0",
+    "@noble/hashes": "^1.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
