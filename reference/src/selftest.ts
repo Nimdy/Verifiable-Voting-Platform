@@ -2,7 +2,8 @@
 // for a formal audit — but it catches the obvious ways ZK proofs go wrong
 // (forgeable proofs, malleable proofs, wrong tallies). Run: npm run selftest
 
-import { G, N, ZERO, mod, mul, randScalar, scalarTo32, invMod } from './group.js';
+import { G, N, ZERO, mod, mul, randScalar, scalarTo32, invMod, pointToHex } from './group.js';
+import { Registrar } from './registrar.js';
 import {
   addCiphertexts, combinePublicKey, decryptionShare, discreteLog, encrypt, trusteeKeygen,
 } from './elgamal.js';
@@ -259,6 +260,32 @@ for (let trial = 0; trial < 40; trial++) {
   let parseThrew = false;
   try { transcriptFromJSON(JSON.stringify(obj2)); } catch { parseThrew = true; }
   check(parseThrew, 'a bad point encoding is rejected on parse');
+}
+
+// 13. Registrar separation: roll = identity-free credential pubs; identityOf is registrar-only;
+//     elections use the published roll, and a voter not on the roll is rejected.
+{
+  const r = new Registrar();
+  const packets = r.register([{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
+  const roll = r.publishedRoll();
+  const rollHex = new Set(roll.map(pointToHex));
+  check(roll.length === 3, 'roll has one pub per registered voter');
+  check(packets.every((pk) => rollHex.has(pointToHex(pk.credential.pub))), 'roll equals the voters credential pubs');
+  check(r.identityOf(packets[0]!.credential.pub) === 'a', 'registrar (only) can map credential → identity');
+  const outsider = issueCredential();
+  check(!rollHex.has(pointToHex(outsider.pub)), 'an unregistered credential is not on the roll');
+  let dupThrew = false; try { r.register([{ id: 'a' }]); } catch { dupThrew = true; }
+  check(dupThrew, 'duplicate registration is rejected');
+
+  const keys = setupKeys(2, 2);
+  const voters: Voter[] = packets.map((pk, i) => ({ credential: pk.credential, choice: i % 2 }));
+  check(verifyTranscript(runElection('e', ['x', 'y'], voters, keys, roll)).ok, 'election with the registrar roll verifies');
+  const sneaky: Voter[] = [...voters, { credential: issueCredential(), choice: 0 }]; // not on the roll
+  check(verifyTranscript(runElection('e', ['x', 'y'], sneaky, keys, roll)).ok === false, 'a voter not on the published roll is rejected');
+
+  const base2 = runElection('e', ['x', 'y'], voters, keys, roll);
+  check(verifyTranscript({ ...base2, numVoters: 1_000_000 }).ok === false, 'verifier rejects numVoters != ballot count (and does not hang)');
+  check(verifyTranscript({ ...base2, eligibleRoll: [...base2.eligibleRoll, base2.eligibleRoll[0]!] }).ok === false, 'verifier rejects a duplicate eligible-roll entry');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);

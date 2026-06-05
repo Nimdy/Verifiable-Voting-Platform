@@ -11,7 +11,7 @@ import {
   proveBit, verifyBit, proveDecryption, proveSumOne, verifySumOne,
   type BitProof, type DecProof, type SumProof,
 } from './proofs.js';
-import { randScalar, mul, mod, N, ZERO, type Point } from './group.js';
+import { randScalar, mul, mod, N, ZERO, pointToHex, type Point } from './group.js';
 import { dkg, combineShares, type KeySetup, type TrusteeShare } from './threshold.js';
 import { sign, type Credential, type Signature } from './credentials.js';
 import { signingBytes, boardBytes, electionContext } from './codec.js';
@@ -132,12 +132,19 @@ export function runElection(
   const ctx = electionContext(contest, publicKey, candidates);
 
   // --- voters encrypt locally, prove validity, and SIGN with their credential ---
-  const board = new BulletinBoard();
-  const ballots: BallotEntry[] = voters.map((v, i) => {
+  const prepared = voters.map((v) => {
     const { selection } = encryptSelection(publicKey, v.choice, K);
     const sig = sign(v.credential.secret, signingBytes(ctx, selection));
-    board.append(boardBytes(ctx, v.credential.pub, selection, sig));
-    return { voter: `voter-${i + 1}`, credentialPub: v.credential.pub, selection, sig };
+    return { credentialPub: v.credential.pub, selection, sig };
+  });
+  // Publish ballots sorted by credential, so board position is independent of REGISTRATION and
+  // CASTING/ARRIVAL order (timing/order metadata does not leak). Position is a deterministic
+  // function of the already-public credential, so it leaks nothing further to a non-registrar.
+  prepared.sort((a, b) => pointToHex(a.credentialPub).localeCompare(pointToHex(b.credentialPub)));
+  const board = new BulletinBoard();
+  const ballots: BallotEntry[] = prepared.map((e, i) => {
+    board.append(boardBytes(ctx, e.credentialPub, e.selection, e.sig));
+    return { voter: `ballot-${i + 1}`, credentialPub: e.credentialPub, selection: e.selection, sig: e.sig };
   });
 
   // --- homomorphically aggregate per candidate; only TOTALS are ever decrypted ---

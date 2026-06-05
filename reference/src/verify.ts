@@ -63,6 +63,10 @@ function verifyInner(t: Transcript): VerifyResult {
   const shapeOk =
     K > 0 && Number.isInteger(k) && k >= 1 &&
     Number.isInteger(t.trustees) && t.trustees >= k &&
+    // numVoters must equal the number of ballots — it is otherwise an attacker-controlled
+    // field used as the discrete-log bound and tally-sum target (denial-of-verification / a
+    // self-consistent sum check). Pinning it to ballots.length closes both.
+    Number.isInteger(t.numVoters) && t.numVoters === t.ballots.length &&
     t.commitments.length === k &&
     t.aggregates.length === K && t.results.length === K &&
     t.ballots.every((b) => b.selection.enc.length === K && b.selection.bitProofs.length === K) &&
@@ -90,6 +94,11 @@ function verifyInner(t: Transcript): VerifyResult {
 
   // 3. Every ballot is signed by an ELIGIBLE credential, and no credential votes twice.
   const eligible = new Set(t.eligibleRoll.map(hx));
+  checks.push({
+    name: 'Eligible roll has no duplicate credentials',
+    ok: eligible.size === t.eligibleRoll.length,
+    detail: eligible.size === t.eligibleRoll.length ? undefined : `${t.eligibleRoll.length - eligible.size} duplicate(s)`,
+  });
   const seen = new Set<string>();
   let ineligible = 0, badSig = 0, duplicate = 0;
   for (const b of t.ballots) {
@@ -162,7 +171,7 @@ function verifyInner(t: Transcript): VerifyResult {
   for (let j = 0; j < K; j++) {
     const combined = combineShares(validShares.map((ds) => ({ index: ds.trusteeIndex, d: ds.shares[j]! })));
     try {
-      const n = discreteLog(t.aggregates[j]!.b.subtract(combined), t.numVoters);
+      const n = discreteLog(t.aggregates[j]!.b.subtract(combined), t.ballots.length);
       results.push(n);
       if (n !== t.results[j]) tallyBad++;
     } catch {

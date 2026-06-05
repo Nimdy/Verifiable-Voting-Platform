@@ -6,7 +6,9 @@
 import { encrypt, addCiphertexts } from './elgamal.js';
 import { proveBit, proveSumOne } from './proofs.js';
 import { randScalar, mod, N, type Point } from './group.js';
-import { issueCredential, registerVoters, sign, type Credential } from './credentials.js';
+import { issueCredential, sign, type Credential } from './credentials.js';
+import { Registrar, type Eligible } from './registrar.js';
+import { pointToHex } from './group.js';
 import { signingBytes, boardBytes, electionContext } from './codec.js';
 import { BulletinBoard } from './bulletin.js';
 import {
@@ -59,13 +61,16 @@ line('━');
 const CANDIDATES = ['Tacos 🌮', 'Pizza 🍕', 'Sushi 🍣', 'Salad 🥗'];
 const K = CANDIDATES.length;
 const keys = setupKeys(5, 3); // 5 trustees; ANY 3 can decrypt
-const roll = registerVoters(9); // 7 vote; 2 spare eligible credentials for attackers
-const eligibleRoll = roll.map((c) => c.pub);
+// A SEPARATE registrar issues credentials; the casting server will see ONLY the published roll.
+const registrar = new Registrar();
+const eligible: Eligible[] = Array.from({ length: 9 }, (_, i) => ({ id: `citizen-${i + 1}` }));
+const packets = registrar.register(eligible); // 7 vote; 2 spare eligible credentials for attackers
+const eligibleRoll = registrar.publishedRoll(); // identity-free, decorrelated order
 const choices = [0, 1, 0, 2, 0, 3, 1]; // Tacos×3, Pizza×2, Sushi×1, Salad×1
-const voters: Voter[] = choices.map((choice, i) => ({ credential: roll[i]!, choice }));
+const voters: Voter[] = choices.map((choice, i) => ({ credential: packets[i]!.credential, choice }));
 
 console.log(`\nContest: "Best team lunch?"   Candidates: ${CANDIDATES.join(', ')}`);
-console.log(`Trustees: ${keys.trustees.length} (any ${keys.threshold} can decrypt)   Eligible voters: ${roll.length}   Voters: ${voters.length}`);
+console.log(`Trustees: ${keys.trustees.length} (any ${keys.threshold} can decrypt)   Registered: ${registrar.size()}   Voters: ${voters.length}`);
 
 // Decrypt with only trustees #1, #3, #5 — trustees #2 and #4 are "offline".
 const t = runElection('Best team lunch?', CANDIDATES, voters, keys, eligibleRoll, [1, 3, 5]);
@@ -84,6 +89,14 @@ const sneaky = singleTrusteeAttempt(t.ballots[0]!.selection.enc[0]!, keys.truste
 console.log(`   Trustee #1 alone tries to read a ballot value → ${sneaky === null ? '❌ FAILED' : `got ${sneaky}`}`);
 console.log('   ✅ No single trustee can read any ballot. Only per-candidate TOTALS are decrypted.\n');
 
+console.log('   REGISTRAR SEPARATION — no single party links identity to vote:');
+line();
+const sample = t.ballots[0]!;
+console.log(`   Public board entry "${sample.voter}" shows a credential, not a person: ${pointToHex(sample.credentialPub).slice(0, 16)}…`);
+console.log('   Can the casting server / public map it to an identity?  ✅ NO (the transcript has no identities)');
+console.log(`   Only the registrar can, privately:  credential → ${registrar.identityOf(sample.credentialPub) ?? '(unknown)'}`);
+console.log('   …and even the registrar cannot see the VOTE (encrypted; only the total is ever decrypted).\n');
+
 console.log('3) CAST-OR-CHALLENGE (Benaloh) — audit one ballot, then cast a fresh one:');
 line();
 const session = newSession();
@@ -99,18 +112,18 @@ console.log('   ✅ A challenged ballot is permanently discarded; the voter cast
 
 console.log('4) DOUBLE VOTE — voter-1 votes again with the same credential:');
 line();
-const dbl = [...t.ballots, makeBallot(ctx, roll[0]!, encryptSelection(t.publicKey, 1, K).selection, 'voter-1-again')];
-report('the same credential cannot be used twice', verifyTranscript({ ...t, ballots: dbl, boardRoot: rootOf(ctx, dbl) }));
+const dbl = [...t.ballots, makeBallot(ctx, packets[0]!.credential, encryptSelection(t.publicKey, 1, K).selection, 'voter-1-again')];
+report('the same credential cannot be used twice', verifyTranscript({ ...t, ballots: dbl, boardRoot: rootOf(ctx, dbl), numVoters: dbl.length }));
 
 console.log('5) INELIGIBLE VOTER — someone not on the roll forges a credential and votes:');
 line();
 const inel = [...t.ballots, makeBallot(ctx, issueCredential(), encryptSelection(t.publicKey, 0, K).selection, 'gate-crasher')];
-report('only credentials on the published roll may vote', verifyTranscript({ ...t, ballots: inel, boardRoot: rootOf(ctx, inel) }));
+report('only credentials on the published roll may vote', verifyTranscript({ ...t, ballots: inel, boardRoot: rootOf(ctx, inel), numVoters: inel.length }));
 
 console.log('6) OVERVOTE — an eligible voter tries to vote for TWO candidates at once:');
 line();
-const over = [...t.ballots, makeBallot(ctx, roll[7]!, overvoteSelection(t.publicKey, K), 'overvoter')];
-report('a ballot must select exactly one candidate', verifyTranscript({ ...t, ballots: over, boardRoot: rootOf(ctx, over) }));
+const over = [...t.ballots, makeBallot(ctx, packets[7]!.credential, overvoteSelection(t.publicKey, K), 'overvoter')];
+report('a ballot must select exactly one candidate', verifyTranscript({ ...t, ballots: over, boardRoot: rootOf(ctx, over), numVoters: over.length }));
 
 console.log('7) RIGGED RESULT — a corrupt authority pads a candidate\'s total:');
 line();
