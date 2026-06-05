@@ -4,10 +4,19 @@
   "type": "module",
   "version": "0.0.1",
   "description": "Executable reference implementation of the verifiable-voting protocol (proof of concept).",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "demo": "tsx src/demo.ts",
     "selftest": "tsx src/selftest.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "@noble/curves": "^1.7.0",
