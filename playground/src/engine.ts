@@ -1,80 +1,87 @@
 // Thin UI wrapper over the EXACT audited protocol from ../reference.
 // No crypto is reimplemented here — we only orchestrate and format.
 import {
-  setupTrustees, runElection, verifyTranscript,
-  issueCredential, sign, encrypt, proveBit, verifyBit, randScalar,
-  signingBytes, boardBytes, BulletinBoard,
+  setupTrustees, runElection, verifyTranscript, encryptSelection, auditSelection,
+  issueCredential, sign, encrypt, proveBit, proveSumOne, addCiphertexts, randScalar, mod, N,
+  signingBytes, boardBytes, electionContext, BulletinBoard,
   type Transcript, type VerifyResult, type TrusteeKey, type Voter, type Credential,
-  type BallotEntry, type Point,
+  type BallotEntry, type Selection, type Point,
 } from '@engine';
 
-export type { Transcript, VerifyResult, TrusteeKey, Voter };
+export type { Transcript, VerifyResult, TrusteeKey, Voter, Credential };
 
-const OPTIONS: [string, string] = ['No', 'Yes'];
 const toHex = (b: Uint8Array): string =>
   Array.from(b).map((x) => x.toString(16).padStart(2, '0')).join('');
 
 export const makeTrustees = (n: number): TrusteeKey[] => setupTrustees(n);
+export const issueSpare = (): Credential => issueCredential();
+export const newVoter = (choice: number): Voter => ({ credential: issueCredential(), choice });
 
-/** Each cast registers a fresh eligible voter credential + their choice. */
-export const newVoter = (vote: 0 | 1): Voter => ({ credential: issueCredential(), vote });
-
-export const tally = (question: string, voters: Voter[], trustees: TrusteeKey[]): Transcript =>
-  runElection(question, OPTIONS, voters, trustees, voters.map((v) => v.credential.pub));
+export const tally = (
+  contest: string,
+  candidates: string[],
+  voters: Voter[],
+  trustees: TrusteeKey[],
+  extraEligible: Point[],
+): Transcript =>
+  runElection(contest, candidates, voters, trustees, [...voters.map((v) => v.credential.pub), ...extraEligible]);
 
 export const verify = (t: Transcript): VerifyResult => verifyTranscript(t);
 
 export const ballotCipher = (t: Transcript, i: number): string => {
   const b = t.ballots[i];
-  return b ? toHex(b.ct.b.toRawBytes()) : '';
+  return b ? toHex(b.selection.enc[0]!.b.toRawBytes()) : '';
 };
-export const yesCount = (t: Transcript): number => t.claimedTally;
-export const noCount = (t: Transcript): number => t.numVoters - t.claimedTally;
 
-// ---- helpers to forge ballots for the "try to cheat" panel -----------------
-function makeBallot(cred: Credential, vote: 0 | 1, pk: Point, label: string): BallotEntry {
-  const r = randScalar();
-  const ct = encrypt(pk, BigInt(vote), r);
-  const proof = proveBit(pk, ct, vote, r);
-  const sig = sign(cred.secret, signingBytes(ct, proof));
-  return { voter: label, credentialPub: cred.pub, ct, proof, sig };
+/** Cast-as-intended check: a device that encrypted `deviceChoice` is audited against `expected`. */
+export const auditCheck = (t: Transcript, deviceChoice: number, expected: number): boolean => {
+  const { selection, randomness } = encryptSelection(t.publicKey, deviceChoice, t.candidates.length);
+  return auditSelection(t.publicKey, selection, randomness, expected);
+};
+
+// ---- forging helpers for the "try to cheat" panel --------------------------
+const ctxOf = (t: Transcript): Uint8Array => electionContext(t.contest, t.publicKey, t.candidates);
+
+function makeBallot(ctx: Uint8Array, cred: Credential, selection: Selection, label: string): BallotEntry {
+  return { voter: label, credentialPub: cred.pub, selection, sig: sign(cred.secret, signingBytes(ctx, selection)) };
 }
-function rootOf(ballots: BallotEntry[]): string {
+function rootOf(ctx: Uint8Array, ballots: BallotEntry[]): string {
   const board = new BulletinBoard();
-  for (const b of ballots) board.append(boardBytes(b.credentialPub, b.ct, b.proof, b.sig));
+  for (const b of ballots) board.append(boardBytes(ctx, b.credentialPub, b.selection, b.sig));
   return board.root();
 }
+function overvoteSelection(pk: Point, K: number): Selection {
+  const enc = [], bitProofs = [], rs: bigint[] = [];
+  for (let j = 0; j < K; j++) {
+    const v: 0 | 1 = j < 2 ? 1 : 0;
+    const r = randScalar();
+    const ct = encrypt(pk, BigInt(v), r);
+    enc.push(ct); bitProofs.push(proveBit(pk, ct, v, r)); rs.push(r);
+  }
+  const R = rs.reduce((a, b) => mod(a + b, N), 0n);
+  return { enc, bitProofs, sumProof: proveSumOne(pk, addCiphertexts(enc), R) };
+}
 
-// ---- insider attacks -------------------------------------------------------
-
-/** An admin secretly flips a stored ballot. */
 export const tamperBallot = (t: Transcript): Transcript => ({
   ...t,
   ballots: t.ballots.map((b, i) =>
-    i === 0 ? { ...b, ct: { a: b.ct.a, b: b.ct.b.add(t.publicKey) } } : b),
+    i === 0
+      ? { ...b, selection: { ...b.selection, enc: b.selection.enc.map((c, j) => (j === 0 ? { a: c.a, b: c.b.add(t.publicKey) } : c)) } }
+      : b),
 });
-
-/** A corrupt authority lies about the result. */
-export const rigResult = (t: Transcript): Transcript => ({
-  ...t,
-  claimedTally: t.claimedTally === t.numVoters ? 0 : t.numVoters,
-});
-
-/** Voter #1 tries to vote a second time with the same credential. */
+export const rigResult = (t: Transcript): Transcript => ({ ...t, results: t.results.map((n, j) => (j === 0 ? n + 2 : n)) });
 export const doubleVote = (t: Transcript, voters: Voter[]): Transcript => {
-  const ballots = [...t.ballots, makeBallot(voters[0]!.credential, 1, t.publicKey, 'voter-1-again')];
-  return { ...t, ballots, boardRoot: rootOf(ballots) };
+  const ctx = ctxOf(t);
+  const bs = [...t.ballots, makeBallot(ctx, voters[0]!.credential, encryptSelection(t.publicKey, 0, t.candidates.length).selection, 'voter-1-again')];
+  return { ...t, ballots: bs, boardRoot: rootOf(ctx, bs) };
 };
-
-/** Someone not on the roll forges a credential and votes. */
 export const ineligibleVote = (t: Transcript): Transcript => {
-  const ballots = [...t.ballots, makeBallot(issueCredential(), 1, t.publicKey, 'gate-crasher')];
-  return { ...t, ballots, boardRoot: rootOf(ballots) };
+  const ctx = ctxOf(t);
+  const bs = [...t.ballots, makeBallot(ctx, issueCredential(), encryptSelection(t.publicKey, 0, t.candidates.length).selection, 'gate-crasher')];
+  return { ...t, ballots: bs, boardRoot: rootOf(ctx, bs) };
 };
-
-/** A voter tries to stuff an out-of-range vote ("10"). Returns whether it was accepted. */
-export const stuffingAccepted = (t: Transcript): boolean => {
-  const r = randScalar();
-  const ct = encrypt(t.publicKey, 10n, r);
-  return verifyBit(t.publicKey, ct, proveBit(t.publicKey, ct, 1, r));
+export const overvote = (t: Transcript, spare: Credential): Transcript => {
+  const ctx = ctxOf(t);
+  const bs = [...t.ballots, makeBallot(ctx, spare, overvoteSelection(t.publicKey, t.candidates.length), 'overvoter')];
+  return { ...t, ballots: bs, boardRoot: rootOf(ctx, bs) };
 };
