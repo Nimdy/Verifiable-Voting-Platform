@@ -2,7 +2,7 @@
 // for a formal audit — but it catches the obvious ways ZK proofs go wrong
 // (forgeable proofs, malleable proofs, wrong tallies). Run: npm run selftest
 
-import { G, N, ZERO, mod, mul, randScalar, scalarTo32 } from './group.js';
+import { G, N, ZERO, mod, mul, randScalar, scalarTo32, invMod } from './group.js';
 import {
   addCiphertexts, combinePublicKey, decryptionShare, discreteLog, encrypt, trusteeKeygen,
 } from './elgamal.js';
@@ -11,8 +11,9 @@ import {
 } from './proofs.js';
 import { issueCredential, sign, verifySig } from './credentials.js';
 import {
-  setupTrustees, runElection, encryptSelection, auditSelection, type Voter,
+  setupKeys, runElection, encryptSelection, auditSelection, type Voter,
 } from './election.js';
+import { dkg, combineShares, verificationKeyAt } from './threshold.js';
 import { verifyTranscript } from './verify.js';
 
 let pass = 0;
@@ -130,11 +131,13 @@ for (let trial = 0; trial < 20; trial++) {
   const K = 2 + Math.floor(Math.random() * 4);
   const candidates = Array.from({ length: K }, (_, j) => `c${j}`);
   const nVoters = 1 + Math.floor(Math.random() * 10);
-  const ts = setupTrustees(1 + Math.floor(Math.random() * 3));
+  const n = 1 + Math.floor(Math.random() * 4);
+  const k = 1 + Math.floor(Math.random() * n);
+  const keys = setupKeys(n, k);
   const roll = Array.from({ length: nVoters }, () => issueCredential());
   const choices = Array.from({ length: nVoters }, () => Math.floor(Math.random() * K));
   const voters: Voter[] = roll.map((credential, i) => ({ credential, choice: choices[i]! }));
-  const t = runElection('c', candidates, voters, ts, roll.map((c) => c.pub));
+  const t = runElection('c', candidates, voters, keys, roll.map((c) => c.pub));
   const r = verifyTranscript(t);
   check(r.ok, `end-to-end election verifies (trial ${trial})`);
   const expected = candidates.map((_, j) => choices.filter((c) => c === j).length);
@@ -145,10 +148,10 @@ for (let trial = 0; trial < 20; trial++) {
 {
   const K = 3;
   const cands = ['a', 'b', 'c'];
-  const ts = setupTrustees(2);
+  const keys = setupKeys(3, 2);
   const roll = [issueCredential(), issueCredential(), issueCredential()];
   const voters: Voter[] = roll.map((credential, i) => ({ credential, choice: i % K }));
-  const base = runElection('e', cands, voters, ts, roll.map((c) => c.pub));
+  const base = runElection('e', cands, voters, keys, roll.map((c) => c.pub));
 
   const noThrow = (fn: () => boolean): boolean | 'threw' => { try { return fn(); } catch { return 'threw'; } };
 
@@ -172,6 +175,46 @@ for (let trial = 0; trial < 20; trial++) {
   check(auditSelection(base.publicKey, good.selection, good.randomness, 1), 'audit passes for a fully valid ballot');
   const corrupt = { ...good.selection, bitProofs: good.selection.bitProofs.map((p, j) => (j === 0 ? { ...p, s0: mod(p.s0 + 1n, N) } : p)) };
   check(!auditSelection(base.publicKey, corrupt, good.randomness, 1), 'audit fails when a bit proof is invalid');
+
+  const oor = { ...base, decShares: base.decShares.map((d, i) => (i === 0 ? { ...d, trusteeIndex: 999 } : d)) };
+  check(noThrow(() => verifyTranscript(oor).ok) === false, 'verifier rejects an out-of-range trustee index');
+
+  let invThrew = false;
+  try { invMod(0n); } catch { invThrew = true; }
+  check(invThrew, 'invMod(0) throws');
+}
+
+// 10. Threshold k-of-n: ANY k of n trustees decrypt; fewer than k cannot; verification
+//     keys recompute from the public commitments.
+for (let trial = 0; trial < 40; trial++) {
+  const n = 2 + Math.floor(Math.random() * 4); // 2..5
+  const k = 1 + Math.floor(Math.random() * n); // 1..n
+  const keys = dkg(n, k);
+  const m = BigInt(Math.floor(Math.random() * 5));
+  const ct = encrypt(keys.publicKey, m, randScalar());
+  const idx = keys.trustees.map((t) => t.index);
+  const shuffled = [...idx].sort(() => Math.random() - 0.5);
+
+  // verification keys recompute from commitments
+  for (const tr of keys.trustees) {
+    check(verificationKeyAt(keys.commitments, tr.index).equals(tr.verificationKey), 'verification key recomputed from commitments');
+  }
+
+  // any k of n decrypt correctly
+  const pick = (set: number[]) => set.map((i) => {
+    const tr = keys.trustees.find((t) => t.index === i)!;
+    return { index: i, d: decryptionShare(ct.a, tr.share) };
+  });
+  const Dk = combineShares(pick(shuffled.slice(0, k)));
+  let dec = -1; try { dec = discreteLog(ct.b.subtract(Dk), 5); } catch { /* not found */ }
+  check(dec === Number(m), `any ${k} of ${n} trustees decrypt correctly (trial ${trial})`);
+
+  // fewer than k must NOT recover the plaintext
+  if (k > 1) {
+    const Dless = combineShares(pick(shuffled.slice(0, k - 1)));
+    let decLess = -1; try { decLess = discreteLog(ct.b.subtract(Dless), 5); } catch { decLess = -1; }
+    check(decLess !== Number(m), `${k - 1} of ${n} trustees do NOT recover the plaintext (trial ${trial})`);
+  }
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);

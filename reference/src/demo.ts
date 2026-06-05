@@ -10,7 +10,7 @@ import { issueCredential, registerVoters, sign, type Credential } from './creden
 import { signingBytes, boardBytes, electionContext } from './codec.js';
 import { BulletinBoard } from './bulletin.js';
 import {
-  setupTrustees, runElection, encryptSelection, auditSelection, singleTrusteeAttempt,
+  setupKeys, runElection, encryptSelection, auditSelection, singleTrusteeAttempt,
   type Transcript, type Voter, type BallotEntry, type Selection,
 } from './election.js';
 import { verifyTranscript, type VerifyResult } from './verify.js';
@@ -55,17 +55,19 @@ line('━');
 
 const CANDIDATES = ['Tacos 🌮', 'Pizza 🍕', 'Sushi 🍣', 'Salad 🥗'];
 const K = CANDIDATES.length;
-const trustees = setupTrustees(3);
+const keys = setupKeys(5, 3); // 5 trustees; ANY 3 can decrypt
 const roll = registerVoters(9); // 7 vote; 2 spare eligible credentials for attackers
 const eligibleRoll = roll.map((c) => c.pub);
 const choices = [0, 1, 0, 2, 0, 3, 1]; // Tacos×3, Pizza×2, Sushi×1, Salad×1
 const voters: Voter[] = choices.map((choice, i) => ({ credential: roll[i]!, choice }));
 
 console.log(`\nContest: "Best team lunch?"   Candidates: ${CANDIDATES.join(', ')}`);
-console.log(`Trustees: ${trustees.length}   Eligible voters: ${roll.length}   Voters: ${voters.length}\n`);
+console.log(`Trustees: ${keys.trustees.length} (any ${keys.threshold} can decrypt)   Eligible voters: ${roll.length}   Voters: ${voters.length}`);
 
-const t = runElection('Best team lunch?', CANDIDATES, voters, trustees, eligibleRoll);
+// Decrypt with only trustees #1, #3, #5 — trustees #2 and #4 are "offline".
+const t = runElection('Best team lunch?', CANDIDATES, voters, keys, eligibleRoll, [1, 3, 5]);
 const ctx = electionContext(t.contest, t.publicKey, t.candidates);
+console.log(`Decryption performed by 3 of 5 trustees (#2 and #4 offline).`);
 console.log('Announced results: ' + CANDIDATES.map((c, j) => `${c} ${t.results[j]}`).join('   ') + '\n');
 
 line();
@@ -75,7 +77,7 @@ report('the published result is provably correct', verifyTranscript(t));
 
 console.log('2) BALLOT SECRECY — a lone trustee tries to unmask one ciphertext:');
 line();
-const sneaky = singleTrusteeAttempt(t.ballots[0]!.selection.enc[0]!, trustees[0]!, t.numVoters);
+const sneaky = singleTrusteeAttempt(t.ballots[0]!.selection.enc[0]!, keys.trustees[0]!, t.numVoters);
 console.log(`   Trustee #1 alone tries to read a ballot value → ${sneaky === null ? '❌ FAILED' : `got ${sneaky}`}`);
 console.log('   ✅ No single trustee can read any ballot. Only per-candidate TOTALS are decrypted.\n');
 
@@ -105,6 +107,11 @@ console.log('7) RIGGED RESULT — a corrupt authority pads a candidate\'s total:
 line();
 const rigged = { ...t, results: t.results.map((n, j) => (j === 0 ? n + 2 : n)) };
 report('the verifier recomputes the real totals and rejects the lie', verifyTranscript(rigged));
+
+console.log('8) BELOW QUORUM — an insider drops trustees so fewer than k remain:');
+line();
+const fewer = { ...t, decShares: t.decShares.slice(0, keys.threshold - 1) };
+report(`fewer than ${keys.threshold} trustees cannot produce a valid decryption`, verifyTranscript(fewer));
 
 line('━');
 console.log('  Summary: the honest election verifies; every insider attack is caught.');

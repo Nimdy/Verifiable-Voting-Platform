@@ -1,17 +1,18 @@
 // Orchestrates one end-to-end multi-candidate election and produces a PUBLIC
 // TRANSCRIPT. A ballot selects exactly one of K candidates, encrypted as K
 // 0/1 ciphertexts (one per candidate) with a bit proof each, plus one
-// "exactly-one-selected" proof. Only the per-candidate TOTALS are ever decrypted.
+// "exactly-one-selected" proof. The key is k-of-n threshold-shared, so any k
+// trustees can decrypt the per-candidate TOTALS — and no fewer can decrypt anything.
 
 import {
-  combinePublicKey, encrypt, addCiphertexts, decryptionShare, discreteLog,
-  trusteeKeygen, type Ciphertext, type TrusteeKey,
+  encrypt, addCiphertexts, decryptionShare, discreteLog, type Ciphertext,
 } from './elgamal.js';
 import {
   proveBit, verifyBit, proveDecryption, proveSumOne, verifySumOne,
   type BitProof, type DecProof, type SumProof,
 } from './proofs.js';
 import { randScalar, mul, mod, N, ZERO, type Point } from './group.js';
+import { dkg, combineShares, type KeySetup, type TrusteeShare } from './threshold.js';
 import { sign, type Credential, type Signature } from './credentials.js';
 import { signingBytes, boardBytes, electionContext } from './codec.js';
 import { BulletinBoard } from './bulletin.js';
@@ -47,18 +48,20 @@ export interface Transcript {
   candidates: string[];
   numVoters: number;
   eligibleRoll: Point[];
-  trusteePubs: { index: number; pub: Point }[];
   publicKey: Point;
+  commitments: Point[]; // Feldman commitments; verifier recomputes each trustee's verification key
+  trustees: number; // n — number of registered trustees (valid indices are 1..n)
+  threshold: number; // k — minimum trustees required to decrypt
   ballots: BallotEntry[];
   boardRoot: string;
   aggregates: Ciphertext[]; // per candidate
-  decShares: DecShareEntry[]; // per trustee
+  decShares: DecShareEntry[]; // from a participating subset of size ≥ threshold
   results: number[]; // votes per candidate (sums to numVoters)
 }
 
-/** Create n trustees with fresh random secret-key shares. */
-export function setupTrustees(n: number): TrusteeKey[] {
-  return Array.from({ length: n }, (_, i) => trusteeKeygen(i + 1, randScalar()));
+/** Generate a k-of-n threshold key (any k of n trustees can decrypt). */
+export function setupKeys(n: number, k: number): KeySetup {
+  return dkg(n, k);
 }
 
 /**
@@ -92,20 +95,18 @@ export function encryptSelection(
 
 /**
  * Cast-as-intended (Benaloh) audit: recompute the selection from revealed
- * randomness and confirm it encodes exactly `choice`. A spoiled ballot is then
- * discarded and the voter re-votes — so a cheating device cannot know in advance
- * whether it will be audited.
+ * randomness, confirm it encodes exactly `choice`, AND verify the attached proofs
+ * (so a successful audit attests a fully castable ballot). A spoiled ballot is then
+ * discarded and the voter re-votes, so a cheating device cannot predict an audit.
  */
 export function auditSelection(pk: Point, sel: Selection, randomness: bigint[], choice: number): boolean {
   if (randomness.length !== sel.enc.length) return false;
   if (!Number.isInteger(choice) || choice < 0 || choice >= sel.enc.length) return false;
-  // (a) the ciphertexts open to exactly the claimed choice under the revealed randomness …
   for (let j = 0; j < sel.enc.length; j++) {
     const v: 0 | 1 = j === choice ? 1 : 0;
     const expected = encrypt(pk, BigInt(v), randomness[j]!);
     if (!expected.a.equals(sel.enc[j]!.a) || !expected.b.equals(sel.enc[j]!.b)) return false;
   }
-  // (b) … AND the attached proofs are valid, so a successful audit attests a fully castable ballot.
   for (let j = 0; j < sel.enc.length; j++) {
     if (!verifyBit(pk, sel.enc[j]!, sel.bitProofs[j]!)) return false;
   }
@@ -115,21 +116,22 @@ export function auditSelection(pk: Point, sel: Selection, randomness: bigint[], 
 /**
  * Run a multi-candidate election. Each voter signs their encrypted selection with
  * their credential; `eligibleRoll` is the published set of credential public keys
- * allowed to vote. Returns the public transcript (trustee secrets stay with caller).
+ * allowed to vote. `participants` chooses which trustees perform the decryption
+ * (defaults to the first `threshold` trustees, demonstrating that k of n suffice).
  */
 export function runElection(
   contest: string,
   candidates: string[],
   voters: Voter[],
-  trustees: TrusteeKey[],
+  keys: KeySetup,
   eligibleRoll: Point[],
+  participants?: number[],
 ): Transcript {
   const K = candidates.length;
-  const trusteePubs = trustees.map((t) => ({ index: t.index, pub: t.pub }));
-  const publicKey = combinePublicKey(trustees.map((t) => t.pub));
+  const publicKey = keys.publicKey;
+  const ctx = electionContext(contest, publicKey, candidates);
 
   // --- voters encrypt locally, prove validity, and SIGN with their credential ---
-  const ctx = electionContext(contest, publicKey, candidates);
   const board = new BulletinBoard();
   const ballots: BallotEntry[] = voters.map((v, i) => {
     const { selection } = encryptSelection(publicKey, v.choice, K);
@@ -142,28 +144,31 @@ export function runElection(
   const aggregates = Array.from({ length: K }, (_, j) =>
     addCiphertexts(ballots.map((b) => b.selection.enc[j]!)));
 
-  // --- each trustee proves it decrypted each candidate aggregate honestly ---
-  const decShares: DecShareEntry[] = trustees.map((t) => {
-    const shares = aggregates.map((agg) => decryptionShare(agg.a, t.secret));
-    const proofs = aggregates.map((agg, j) => proveDecryption(agg.a, t.pub, shares[j]!, t.secret));
+  // --- a participating subset (≥ threshold) of trustees decrypts each aggregate ---
+  const subset = participants ?? keys.trustees.slice(0, keys.threshold).map((t) => t.index);
+  const participating = keys.trustees.filter((t) => subset.includes(t.index));
+  const decShares: DecShareEntry[] = participating.map((t) => {
+    const shares = aggregates.map((agg) => decryptionShare(agg.a, t.share));
+    const proofs = aggregates.map((agg, j) => proveDecryption(agg.a, t.verificationKey, shares[j]!, t.share));
     return { trusteeIndex: t.index, shares, proofs };
   });
 
-  // --- combine shares per candidate and read off each total (held by NO single party) ---
+  // --- Lagrange-combine the shares per candidate (recovers a^x, x never reconstructed) ---
   const results = aggregates.map((agg, j) => {
-    const combined = decShares.reduce<Point>((acc, ds) => acc.add(ds.shares[j]!), ZERO);
+    const combined = combineShares(decShares.map((ds) => ({ index: ds.trusteeIndex, d: ds.shares[j]! })));
     return discreteLog(agg.b.subtract(combined), voters.length);
   });
 
   return {
-    contest, candidates, numVoters: voters.length, eligibleRoll, trusteePubs, publicKey,
+    contest, candidates, numVoters: voters.length, eligibleRoll, publicKey,
+    commitments: keys.commitments, trustees: keys.trustees.length, threshold: keys.threshold,
     ballots, boardRoot: board.root(), aggregates, decShares, results,
   };
 }
 
 /** A single trustee attempting to decrypt one candidate ciphertext alone — to show it can't. */
-export function singleTrusteeAttempt(ct: Ciphertext, trustee: TrusteeKey, max: number): number | null {
-  const partial = ct.b.subtract(mul(ct.a, trustee.secret));
+export function singleTrusteeAttempt(ct: Ciphertext, trustee: TrusteeShare, max: number): number | null {
+  const partial = ct.b.subtract(mul(ct.a, trustee.share));
   try {
     return discreteLog(partial, max);
   } catch {

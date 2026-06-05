@@ -3,13 +3,14 @@
 // It takes only the public transcript and rechecks EVERYTHING from scratch,
 // trusting nothing about who produced it. If any insider altered a ballot, voted
 // without an eligible credential, voted twice, cast an invalid/multi selection,
-// faked a decryption, or lied about a candidate's total, at least one check below
-// fails — and it ALWAYS returns a verdict (never throws) even for malformed input.
-// In production this is re-implemented in a different language by a different team
-// so a single bug cannot hide itself.
+// faked a decryption, decrypted with too few trustees, or lied about a candidate's
+// total, at least one check below fails — and it ALWAYS returns a verdict (never
+// throws), even for malformed input. In production this is re-implemented in a
+// different language by a different team so a single bug cannot hide itself.
 
-import { addCiphertexts, combinePublicKey, discreteLog } from './elgamal.js';
+import { addCiphertexts, discreteLog } from './elgamal.js';
 import { verifyBit, verifyDecryption, verifySumOne } from './proofs.js';
+import { verificationKeyAt, combineShares } from './threshold.js';
 import { verifySig } from './credentials.js';
 import { ZERO, type Point } from './group.js';
 import { signingBytes, boardBytes, electionContext } from './codec.js';
@@ -44,7 +45,6 @@ export function verifyTranscript(t: Transcript): VerifyResult {
   try {
     return verifyInner(t);
   } catch (err) {
-    // The trust root must always emit a verdict, even for adversarial/malformed input.
     return {
       ok: false,
       results: null,
@@ -56,23 +56,27 @@ export function verifyTranscript(t: Transcript): VerifyResult {
 function verifyInner(t: Transcript): VerifyResult {
   const checks: Check[] = [];
   const K = t.candidates.length;
+  const k = t.threshold;
 
-  // 0. Shape gate — every per-candidate array must have exactly K entries. REJECT (never pad)
-  //    on mismatch, so no later loop can index past the end.
+  // 0. Shape gate — every per-candidate array has exactly K entries, commitments has
+  //    exactly k. REJECT (never pad) on mismatch so no later loop indexes past the end.
   const shapeOk =
-    K > 0 &&
-    t.aggregates.length === K &&
-    t.results.length === K &&
+    K > 0 && Number.isInteger(k) && k >= 1 &&
+    Number.isInteger(t.trustees) && t.trustees >= k &&
+    t.commitments.length === k &&
+    t.aggregates.length === K && t.results.length === K &&
     t.ballots.every((b) => b.selection.enc.length === K && b.selection.bitProofs.length === K) &&
     t.decShares.every((ds) => ds.shares.length === K && ds.proofs.length === K);
-  checks.push({ name: 'Transcript shape: every ballot/aggregate/share has exactly K entries', ok: shapeOk });
+  checks.push({ name: 'Transcript shape: K-length arrays and k commitments', ok: shapeOk });
   if (!shapeOk) return { ok: false, checks, results: null };
+
+  // A trustee index is valid only if it is a registered trustee (1..n).
+  const idxOk = (i: number): boolean => Number.isInteger(i) && i >= 1 && i <= t.trustees;
 
   const ctx = electionContext(t.contest, t.publicKey, t.candidates);
 
-  // 1. Joint public key is exactly the combination of the published trustee keys.
-  const h = combinePublicKey(t.trusteePubs.map((p) => p.pub));
-  checks.push({ name: 'Joint public key = combination of trustee keys', ok: h.equals(t.publicKey) });
+  // 1. Joint public key is exactly commitment C₀ of the threshold key.
+  checks.push({ name: 'Joint public key = commitment C₀ (threshold key)', ok: t.commitments[0]!.equals(t.publicKey) });
 
   // 2. Bulletin-board Merkle root commits to exactly these ballots, in order.
   const board = new BulletinBoard();
@@ -126,11 +130,21 @@ function verifyInner(t: Transcript): VerifyResult {
   }
   checks.push({ name: 'Each candidate aggregate = homomorphic sum of its column', ok: aggBad === 0 });
 
-  // 6. Every trustee decryption share (for every candidate) is provably correct.
+  // 6. A quorum of ≥ k DISTINCT trustees, each with a provably-correct decryption share
+  //    against the verification key recomputed from the public commitments.
+  const indices = t.decShares.map((ds) => ds.trusteeIndex);
+  const distinct = new Set(indices).size === indices.length;
+  const allRegistered = indices.every(idxOk);
+  checks.push({
+    name: `Decryption quorum: ≥ ${k} distinct registered trustees (1..${t.trustees})`,
+    ok: distinct && allRegistered && t.decShares.length >= k,
+    detail: `${t.decShares.length} trustee(s), threshold ${k}`,
+  });
+
   let badShares = 0;
   for (const ds of t.decShares) {
-    const pub = t.trusteePubs.find((p) => p.index === ds.trusteeIndex)?.pub;
-    if (!pub) { badShares++; continue; }
+    if (!idxOk(ds.trusteeIndex)) { badShares += K; continue; } // never feed a bogus index to point arithmetic
+    const pub = verificationKeyAt(t.commitments, ds.trusteeIndex);
     for (let j = 0; j < K; j++) {
       if (!verifyDecryption(t.aggregates[j]!.a, pub, ds.shares[j]!, ds.proofs[j]!)) badShares++;
     }
@@ -141,11 +155,12 @@ function verifyInner(t: Transcript): VerifyResult {
     detail: badShares === 0 ? `${t.decShares.length}×${K} proven` : `${badShares} BAD share(s)`,
   });
 
-  // 7. Each published candidate total is the true decryption of its aggregate.
+  // 7. Each published candidate total is the true Lagrange-combined decryption.
   let tallyBad = 0;
   const results: number[] = [];
+  const validShares = t.decShares.filter((ds) => idxOk(ds.trusteeIndex)); // bogus indices excluded from interpolation
   for (let j = 0; j < K; j++) {
-    const combined = t.decShares.reduce<Point>((acc, ds) => acc.add(ds.shares[j]!), ZERO);
+    const combined = combineShares(validShares.map((ds) => ({ index: ds.trusteeIndex, d: ds.shares[j]! })));
     try {
       const n = discreteLog(t.aggregates[j]!.b.subtract(combined), t.numVoters);
       results.push(n);

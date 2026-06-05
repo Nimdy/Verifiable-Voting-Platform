@@ -3,6 +3,7 @@
 export * from './group.js';
 export * from './elgamal.js';
 export * from './proofs.js';
+export * from './threshold.js';
 export * from './credentials.js';
 export * from './codec.js';
 export * from './bulletin.js';

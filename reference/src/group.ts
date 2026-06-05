@@ -80,6 +80,25 @@ export function hashToScalar(label: string, points: Point[]): bigint {
 /** Canonical scalar range check — rejects non-canonical (≥ N) encodings. */
 export const inRange = (x: bigint): boolean => x >= 0n && x < N;
 
+/** Modular exponentiation base^exp mod m. */
+export function modPow(base: bigint, exp: bigint, m: bigint = N): bigint {
+  let result = 1n;
+  let b = mod(base, m);
+  let e = exp;
+  while (e > 0n) {
+    if (e & 1n) result = (result * b) % m;
+    b = (b * b) % m;
+    e >>= 1n;
+  }
+  return result;
+}
+
+/** Modular inverse mod N (N is prime → Fermat: a^(N-2)). Used for Lagrange coefficients. */
+export function invMod(a: bigint, m: bigint = N): bigint {
+  if (mod(a, m) === 0n) throw new Error('invMod: no inverse for 0');
+  return modPow(mod(a, m), m - 2n, m);
+}
+
 /** Encode a scalar as 32 big-endian bytes (for canonical serialization). */
 export function scalarTo32(s: bigint): Uint8Array {
   const out = new Uint8Array(32);
