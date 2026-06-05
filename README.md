@@ -5,6 +5,14 @@
 > DAO/governance, and community voting. A blockchain is supported as **one optional, swappable
 > bulletin-board / settlement adapter**, never as the thing you have to trust.
 
+## ▶️ Try it in 30 seconds
+
+```bash
+cd playground && npm install && npm run dev
+```
+
+Opens an interactive [playground](playground): run an election, watch every vote get encrypted on a public board, hit one button to **verify the result yourself**, then **try to cheat it** — flip a ballot, stuff a fake vote, rig the tally — and watch it get caught. It runs entirely in your browser on the same audited crypto as [`reference/`](reference). (Pre-audit demo; not for binding elections.)
+
 This project began as a 2014-era concept ([docs/ORIGINAL_CONCEPT.md](docs/ORIGINAL_CONCEPT.md)) for a
 blockchain voting system. The good instincts in that concept — a public bulletin board, a paper
 audit trail, single-use eligibility tokens, and separating *who is eligible* from *how they voted* —
