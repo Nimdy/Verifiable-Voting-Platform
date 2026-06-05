@@ -30,8 +30,9 @@ npm run typecheck
   k** can jointly decrypt the totals (surviving offline/faulty trustees), and no single
   trustee — nor any coalition smaller than k — can read a ballot. Each decryption share
   carries a correctness proof checked against keys recomputed from public commitments.
-- **Cast-as-intended audit (Benaloh)** — spoil a ballot to recompute it from revealed
-  randomness and confirm (ciphertexts *and* proofs) it encoded your choice.
+- **Cast-or-challenge (Benaloh)** — prepare a ballot, then either *challenge* it (reveal
+  the randomness, audit it, and permanently discard it) or *cast* it (randomness stays
+  secret). A challenged ballot can never be cast, so a cheating device can't predict an audit.
 - **Public bulletin board** — an append-only RFC-6962 Merkle log, context-bound to the
   election so ballots can't be replayed elsewhere; altering any ballot changes the root.
 - **Independent verifier** — rechecks the entire public transcript from scratch, and
@@ -44,9 +45,9 @@ ballot, an out-of-range vote, a forged proof, and a rigged tally.
 
 These are tracked on the [roadmap](../docs/ROADMAP.md) (M1/M3), not oversights:
 
-- **Spoil-then-revote protocol** — the Benaloh audit *recomputation* is sound, but the
-  discard-and-re-vote state machine (spoiled-ballot nullifiers, never tally an audited
-  ballot) is not modeled here. → M3.
+- **Networked casting service** — the cast-or-challenge session (spoil-then-revote) is
+  modeled in `session.ts`, but a real deployment wires it into a networked casting
+  service with persisted per-voter state. → M3.
 - **Registrar identity-separation** — credentials are pseudonymous but issued in-process;
   the real Belenios split (registrar ≠ casting server, identity proofing off-ledger) is M3.
 - **Distributed DKG ceremony** — k-of-n threshold sharing is implemented, but the
@@ -69,6 +70,7 @@ These are tracked on the [roadmap](../docs/ROADMAP.md) (M1/M3), not oversights:
 | `src/bulletin.ts` | append-only RFC-6962 Merkle bulletin board |
 | `src/codec.ts` | canonical, context-bound ballot serialization |
 | `src/election.ts` | runs a multi-candidate election; encrypt/audit a selection |
+| `src/session.ts` | cast-or-challenge (Benaloh) voting session |
 | `src/verify.ts` | the independent verifier (always returns a verdict) |
 | `src/demo.ts` | end-to-end demo + seven insider attacks |
 | `src/selftest.ts` | randomized soundness tests (~4,500 trials) |

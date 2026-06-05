@@ -30,7 +30,7 @@ A second adversarial review covered the new multi-candidate machinery (the exact
 - **Election-context binding** — the contest, joint public key, and candidate list are mixed into every signed ballot, so a ballot/signature cannot be replayed into another election or contest. (`reference/src/codec.ts`)
 - **Range guard** on `encryptSelection`/`auditSelection` rejects out-of-range choices.
 
-Remaining stage-1 gaps (tracked on the [roadmap](ROADMAP.md)): the spoil-then-revote state machine and registrar identity-separation (M3), and k-of-n Pedersen DKG (M1/M3).
+Remaining stage-1 gaps (tracked on the [roadmap](ROADMAP.md)): registrar identity-separation and a networked casting service (M3). *(The spoil-then-revote state machine is now implemented in `reference/src/session.ts`, and k-of-n threshold decryption in round 3 below.)*
 
 ## ✅ Fixes already applied (post-audit)
 
