@@ -6,6 +6,20 @@
 
 The core ZK/tally machinery is cryptographically sound for its stated stage-1 scope, with one genuine exception in the commitment layer. I independently re-read all of src/ and empirically reproduced the load-bearing claims against the running code (Node 24, @noble/curves 1.9.7). The three Sigma protocols are correctly built and correctly applied: the disjunctive Chaum-Pedersen 0/1 proof and the Chaum-Pedersen decryption-share proof both use strong Fiat-Shamir (the bit challenge binds h, a, and b; the decryption challenge binds G, a, pub, share, plus all commitments), so there is NO frozen-heart / weak-FS hole; the c0+c1==H(...) sub-challenge binding is the real soundness gate and it holds (an m=2 ciphertext cannot be passed off as a bit; cross-key, cross-ciphertext, and cross-trustee replays all fail). Exponential ElGamal, the additive-homomorphic fold, and additive N-of-N decryption are mathematically correct (b - Sigma a^{x_i} = g^{Sigma m}), and serializeBallot is a canonical injective fixed-width 320-byte record. The single thing that breaks the system's own stated property at PoC stage is the bulletin board's Merkle construction: it duplicates the last node on odd levels (the classic CVE-2012-2459 pattern), so [A,B,C] and [A,B,C,C] hash to an identical root (confirmed byte-identical: 570cc377...). That defeats the root's only job — uniquely committing to the ordered ballot multiset — and enables vote injection/deletion against any externally anchored root, which is the explicitly stated production design. Everything else the auditors flagged is either a defense-in-depth nicety or an EXPECTED stage-1 scope gap (no eligibility/nullifier/identity binding, N-of-N instead of k-of-n, no point/scalar validation at a not-yet-existent deserialization boundary). Bottom line: the proof math is right and the tally is honestly verifiable within scope; fix the Merkle malleability before relying on the root, and treat the missing eligibility/identity layer as the non-negotiable prerequisite before any real use.
 
+## Round 2 — multi-candidate + cast-as-intended (Benaloh)
+
+A second adversarial review covered the new multi-candidate machinery (the exactly-one-selected proof and per-candidate tally) and the Benaloh audit.
+
+**Verdict:** the new `verifySumOne` (exactly-one-selected) proof and the multi-candidate verifier are **cryptographically sound** for scope — no transcript that is actually false is ever accepted as valid; Fiat–Shamir binds the full statement; non-canonical/aliased scalars are rejected; and `auditSelection` correctly binds *both* ciphertext components, so a device that encrypted a different candidate cannot pass for the claimed choice.
+
+**Fixed in response (verified — 4,496/4,496 self-tests pass; demo catches all seven attacks):**
+- **HIGH — the verifier could crash on a malformed ballot.** `selectionValid` now binds each ballot's ciphertext count to the contest's `K`; a top-level shape gate **REJECTS** (never pads with identity) any wrong-length array; and `verifyTranscript` is wrapped so it **always returns a verdict, never throws.** (`reference/src/verify.ts`)
+- **The Benaloh audit now also verifies the ZK proofs**, so a successful audit attests a fully *castable* ballot, not just matching ciphertexts. (`reference/src/election.ts`)
+- **Election-context binding** — the contest, joint public key, and candidate list are mixed into every signed ballot, so a ballot/signature cannot be replayed into another election or contest. (`reference/src/codec.ts`)
+- **Range guard** on `encryptSelection`/`auditSelection` rejects out-of-range choices.
+
+Remaining stage-1 gaps (tracked on the [roadmap](ROADMAP.md)): the spoil-then-revote state machine and registrar identity-separation (M3), and k-of-n Pedersen DKG (M1/M3).
+
 ## ✅ Fixes already applied (post-audit)
 
 All three concrete findings were fixed in the reference code and re-verified (2400/2400 self-tests pass; the demo still catches every insider attack):

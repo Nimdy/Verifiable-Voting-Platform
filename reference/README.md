@@ -21,15 +21,19 @@ npm run typecheck
 
 > **Verify everything. Reveal nothing. No insider can cheat unseen.**
 
-- **Encrypted ballots** — exponential ElGamal over ristretto255 (`@noble/curves`).
-- **Ballot validity (ZK)** — a disjunctive Chaum–Pedersen proof that each ballot
-  encrypts `0` or `1`, without revealing which. Stuffing a `10` is impossible.
+- **Multi-candidate ballots** — pick 1 of K candidates. Each candidate ciphertext is
+  proven `0`/`1` (disjunctive Chaum–Pedersen) **and** an *exactly-one-selected* proof
+  pins the ballot to a single choice — so undervotes and overvotes are rejected.
+- **Eligibility & one-vote-per-voter** — Belenios-style credentials sign each ballot;
+  a published eligible roll + a single-use nullifier block ineligible and double votes.
 - **Distributed trust** — the secret key is split across N trustees; no single one can
-  decrypt any ballot. Only the **total** is ever decrypted, with a correctness proof.
-- **Public bulletin board** — an append-only Merkle log; altering any ballot changes
-  the root and is detected.
-- **Independent verifier** — rechecks the entire public transcript from scratch,
-  trusting nothing about who produced it.
+  decrypt any ballot. Only per-candidate **totals** are decrypted, each with a proof.
+- **Cast-as-intended audit (Benaloh)** — spoil a ballot to recompute it from revealed
+  randomness and confirm (ciphertexts *and* proofs) it encoded your choice.
+- **Public bulletin board** — an append-only RFC-6962 Merkle log, context-bound to the
+  election so ballots can't be replayed elsewhere; altering any ballot changes the root.
+- **Independent verifier** — rechecks the entire public transcript from scratch, and
+  **always returns a verdict** (never throws), even on malformed input.
 
 The demo then plays the insider and the verifier catches every attack: a flipped
 ballot, an out-of-range vote, a forged proof, and a rigged tally.
@@ -38,11 +42,13 @@ ballot, an out-of-range vote, a forged proof, and a rigged tally.
 
 These are tracked on the [roadmap](../docs/ROADMAP.md) (M1/M3), not oversights:
 
-- **Eligibility & one-vote-per-voter** — no registrar, credentials, or nullifiers yet;
-  ballots here are not bound to an eligible identity (so they are replayable). → M3.
+- **Spoil-then-revote protocol** — the Benaloh audit *recomputation* is sound, but the
+  discard-and-re-vote state machine (spoiled-ballot nullifiers, never tally an audited
+  ballot) is not modeled here. → M3.
+- **Registrar identity-separation** — credentials are pseudonymous but issued in-process;
+  the real Belenios split (registrar ≠ casting server, identity proofing off-ledger) is M3.
 - **k-of-n threshold** — uses simple N-of-N additive key sharing; real threshold
   decryption needs Pedersen DKG so the election survives an offline trustee. → M1/M3.
-- **Cast-as-intended** — no Benaloh cast-or-challenge flow yet. → M3.
 - **Input validation on deserialization** — points are passed in-process, not parsed
   from untrusted bytes with full validation. → M1.
 - **Production hardening** — Merlin/STROBE transcripts, constant-time review, an
@@ -54,10 +60,11 @@ These are tracked on the [roadmap](../docs/ROADMAP.md) (M1/M3), not oversights:
 |------|------|
 | `src/group.ts` | ristretto255 group + scalar helpers, Fiat–Shamir hashing |
 | `src/elgamal.ts` | exponential ElGamal, distributed keys, homomorphic add, decryption |
-| `src/proofs.ts` | disjunctive Chaum–Pedersen (ballot validity) + decryption-correctness proofs |
-| `src/bulletin.ts` | append-only Merkle bulletin board |
-| `src/codec.ts` | canonical ballot serialization |
-| `src/election.ts` | runs an election, produces the public transcript |
-| `src/verify.ts` | the independent verifier |
-| `src/demo.ts` | end-to-end demo + insider attacks |
-| `src/selftest.ts` | randomized soundness tests |
+| `src/proofs.ts` | Chaum–Pedersen bit / decryption / exactly-one-selected proofs |
+| `src/credentials.ts` | Belenios-style voter credentials (Schnorr signatures) |
+| `src/bulletin.ts` | append-only RFC-6962 Merkle bulletin board |
+| `src/codec.ts` | canonical, context-bound ballot serialization |
+| `src/election.ts` | runs a multi-candidate election; encrypt/audit a selection |
+| `src/verify.ts` | the independent verifier (always returns a verdict) |
+| `src/demo.ts` | end-to-end demo + seven insider attacks |
+| `src/selftest.ts` | randomized soundness tests (~4,500 trials) |
