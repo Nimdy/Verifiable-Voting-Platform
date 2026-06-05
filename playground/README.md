@@ -1,6 +1,8 @@
 # Playground
 
-Run a real **end-to-end-verifiable election in your browser** in ~30 seconds.
+**🌐 Live demo (no install): https://nimdy.github.io/voting-system-blockchain/**
+
+Or run a real **end-to-end-verifiable election in your browser** locally in ~30 seconds.
 
 ```bash
 cd playground

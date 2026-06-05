@@ -5,13 +5,17 @@
 > DAO/governance, and community voting. A blockchain is supported as **one optional, swappable
 > bulletin-board / settlement adapter**, never as the thing you have to trust.
 
-## ▶️ Try it in 30 seconds
+## ▶️ Try it
+
+**🌐 Live, no install → https://nimdy.github.io/voting-system-blockchain/**
+
+Or run it locally:
 
 ```bash
 cd playground && npm install && npm run dev
 ```
 
-Opens an interactive [playground](playground): run a **multi-candidate** election, watch every vote get encrypted on a public board, **audit your own ballot** (cast-as-intended), hit one button to **verify the result yourself** with a live tally — then **try to cheat it** (vote twice · vote without a credential · vote for two candidates · flip a ballot · rig the tally) and watch each get caught. Runs entirely in your browser on the same audited crypto as [`reference/`](reference). (Pre-audit demo; not for binding elections.)
+Either way you get an interactive [playground](playground): run a **multi-candidate** election, watch every vote get encrypted on a public board, **audit your own ballot** (cast-as-intended), hit one button to **verify the result yourself** with a live tally — then **try to cheat it** (vote twice · vote without a credential · vote for two candidates · flip a ballot · rig the tally) and watch each get caught. Runs entirely in your browser on the same audited crypto as [`reference/`](reference). (Pre-audit demo; not for binding elections.)
 
 This project began as a 2014-era concept ([docs/ORIGINAL_CONCEPT.md](docs/ORIGINAL_CONCEPT.md)) for a
 blockchain voting system. The good instincts in that concept — a public bulletin board, a paper
