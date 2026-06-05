@@ -27,6 +27,10 @@ npm run typecheck
   pins the ballot to a single choice — so undervotes and overvotes are rejected.
 - **Eligibility & one-vote-per-voter** — Belenios-style credentials sign each ballot;
   a published eligible roll + a single-use nullifier block ineligible and double votes.
+- **Registrar separation (privacy)** — a separate registrar holds the identity↔credential
+  map privately and publishes only an identity-decorrelated roll; ballots are published in
+  credential-sorted order, so no single party links a person to their **vote**. (The registrar
+  alone still learns *turnout* — who voted — but never how; hiding turnout is an M3+ goal.)
 - **k-of-n threshold trust** — the secret key is Shamir-shared across n trustees; **any
   k** can jointly decrypt the totals (surviving offline/faulty trustees), and no single
   trustee — nor any coalition smaller than k — can read a ballot. Each decryption share
@@ -49,8 +53,10 @@ These are tracked on the [roadmap](../docs/ROADMAP.md) (M1/M3), not oversights:
 - **Networked casting service** — the cast-or-challenge session (spoil-then-revote) is
   modeled in `session.ts`, but a real deployment wires it into a networked casting
   service with persisted per-voter state. → M3.
-- **Registrar identity-separation** — credentials are pseudonymous but issued in-process;
-  the real Belenios split (registrar ≠ casting server, identity proofing off-ledger) is M3.
+- **Networked registrar & full registrar-integrity** — the identity↔credential *privacy*
+  separation is modeled (`registrar.ts`), but the networked registrar/casting services and a
+  voter-contributed credential part (for full "safe if registrar OR server is honest" integrity)
+  remain. → M3+.
 - **Distributed DKG ceremony** — k-of-n threshold sharing is implemented, but the
   *coefficient sampling* is simulated in one process; a real deployment runs the
   multi-party DKG so no single machine ever sees the secret. → M3.
@@ -67,6 +73,7 @@ These are tracked on the [roadmap](../docs/ROADMAP.md) (M1/M3), not oversights:
 | `src/elgamal.ts` | exponential ElGamal, distributed keys, homomorphic add, decryption |
 | `src/proofs.ts` | Chaum–Pedersen bit / decryption / exactly-one-selected proofs |
 | `src/credentials.ts` | Belenios-style voter credentials (Schnorr signatures) |
+| `src/registrar.ts` | registration authority: identity↔credential separation |
 | `src/threshold.ts` | k-of-n Pedersen DKG, Feldman commitments, Lagrange combine |
 | `src/bulletin.ts` | append-only RFC-6962 Merkle bulletin board |
 | `src/codec.ts` | canonical, context-bound ballot serialization |

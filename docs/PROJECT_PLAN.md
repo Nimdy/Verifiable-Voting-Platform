@@ -22,9 +22,19 @@ An open, self-hostable, end-to-end-verifiable (E2E-V) voting PLATFORM whose root
 
 ## Current status
 
-- **Stage 1 (now):** a working, fuzz-tested reference proof of concept lives in [`reference/`](../reference) — encrypted ballots, zero-knowledge validity proofs, distributed-trust threshold decryption, a public Merkle bulletin board, and an independent verifier that catches insider attacks.
+**Stage-1 reference engine — feature-complete & adversarially reviewed (4 rounds, ~4,700 fuzz tests, CI green).** Lives in [`reference/`](../reference):
 
-- **Next:** milestone **M0** (sign off the threat model & scope) then **M1** (production Rust crypto core + independent Python verifier). See the [Roadmap](ROADMAP.md).
+- multi-candidate (1-of-K) ballots with a zero-knowledge "exactly one selected" proof
+- voter **eligibility** credentials + single-use nullifiers, with a **registrar that separates identity from ballot** (no single party links a person to their vote)
+- **k-of-n threshold** decryption (Pedersen/Feldman DKG + Lagrange) — any k of n trustees, none fewer
+- **cast-or-challenge** (Benaloh) auditing
+- a public RFC-6962 bulletin board + a homomorphic, publicly-verifiable tally
+- **publish-and-reverify**: a canonical `transcript.json` re-checked from the public record alone
+- a **second, independent verifier** in Python on libsodium — cross-checked against the TypeScript verifier in CI on every push
+
+Plus a **live in-browser playground** (https://nimdy.github.io/voting-system-blockchain/), 58 tracked issues, and three green CI workflows.
+
+**Next:** networked services (registrar / casting / coordinator), the production Rust core (M1), the [interactive lifecycle dashboard](https://github.com/Nimdy/voting-system-blockchain/issues/58), and ranked-choice ballots. See the [Roadmap](ROADMAP.md).
 
 ## Planning artifacts
 
