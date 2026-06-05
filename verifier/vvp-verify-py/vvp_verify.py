@@ -273,6 +273,8 @@ def verify(j):
     shape_ok = (
         K > 0 and isinstance(k, int) and k >= 1
         and isinstance(n_trustees, int) and n_trustees >= k
+        # numVoters is attacker-controlled; pin it to the ballot count (discrete-log bound + sum target).
+        and isinstance(num_voters, int) and num_voters == len(j["ballots"])
         and len(j["commitments"]) == k
         and len(j["aggregates"]) == K and len(j["results"]) == K
         and all(len(b["selection"]["enc"]) == K and len(b["selection"]["bitProofs"]) == K for b in j["ballots"])
@@ -285,6 +287,7 @@ def verify(j):
     commitments = [parse_point(c) for c in j["commitments"]]
     public_key = parse_point(j["publicKey"])
     eligible = {parse_point(c) for c in j["eligibleRoll"]}
+    add("Eligible roll has no duplicate credentials", len(eligible) == len(j["eligibleRoll"]))
     ctx = election_context(j["contest"], public_key, candidates)
 
     ballots = [{
@@ -354,7 +357,7 @@ def verify(j):
     tally_bad = 0
     for jx in range(K):
         combined = combine_shares([(d["trusteeIndex"], d["shares"][jx]) for d in valid])
-        m = discrete_log(psub(aggregates[jx]["b"], combined), num_voters)
+        m = discrete_log(psub(aggregates[jx]["b"], combined), len(ballots))
         results.append(m if m is not None else -1)
         if m != j["results"][jx]:
             tally_bad += 1
