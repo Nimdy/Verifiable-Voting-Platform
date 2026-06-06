@@ -76,5 +76,11 @@ verifyAnchor(anchor, manifest, { boardRoot: t.boardRoot, numVoters: t.numVoters,
 // hand toArloManifestCsv(manifest) + the reported tally to Arlo/SHANGRLA; run the RLA on the PAPER.
 ```
 
-`npm run demo` prints this end-to-end. Deferred (tracked): a Python cross-verifier for the anchor,
-the chain-anchor adapter, and production RLA statistics (Arlo/SHANGRLA remain authoritative).
+`npm run demo` prints this end-to-end, including the **M4 criterion** ([ADR-0004](ADRs/ADR-0004-paper-ballots-of-record-plus-risk-limiting-audits-are-the-on.md)): an
+illustrative ballot-polling sequential test (`bravoBallotPolling`) shows that when a compromised endpoint
+flips the outcome — the digital transcript still *verifies* with the flipped winner — the paper contradicts
+the reported winner, the audit fails to confirm, and it escalates to a full hand count (paper wins, flip
+caught); an honest election confirms. The anchor is held to the **two-verifier bar**: an independent
+Python/libsodium verifier (`vvp_verify.py`) re-checks `out/rla-export.json`, cross-checked against the TS
+CLI in CI. Deferred (tracked): the chain-anchor adapter (write only the ~64-byte signed roots, ADR-0002)
+and production RLA statistics (Arlo/SHANGRLA remain authoritative).

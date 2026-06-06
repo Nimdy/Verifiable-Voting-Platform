@@ -23,7 +23,7 @@ import {
 } from './structured.js';
 import { runRankedElection, verifyRankedTranscript, type RankedVoter } from './ranked.js';
 import { runMixnetElection, verifyMixnetTranscript, type MixnetVoter } from './mixnet-irv.js';
-import { makeManifest, buildAnchor, verifyAnchor, reportedResults, pollingExport, pollingExportToJSON, toArloManifestCsv, bravoSampleSize, type BatchRow } from './rla.js';
+import { makeManifest, buildAnchor, verifyAnchor, reportedResults, pollingExport, pollingExportToJSON, toArloManifestCsv, bravoSampleSize, bravoBallotPolling, representativeSample, type BatchRow } from './rla.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { verifyTranscript, type VerifyResult } from './verify.js';
 
@@ -221,6 +221,17 @@ console.log(`   Illustrative ballot-polling sample (α=0.05): ~${bravo.sampleSiz
 console.log('   ⚠ Paper is the legal record; the RLA on paper is what catches an endpoint/tabulation flip. Digital ≠ software independence (ADR-0004).\n');
 const rlaWinner = t.results.indexOf(Math.max(...t.results));
 const rlaExport = pollingExport(anchor, manifest, reportedResults(t.contest, t.candidates, 'plurality', t.results, t.numVoters, rlaWinner));
+
+// M4 criterion (ADR-0004): would the RLA catch an endpoint that flipped the outcome? E2E-V alone can't —
+// a compromised device shows the voter A, encrypts B, and the digital transcript then VERIFIES with B.
+// Only the paper + RLA catches it.
+console.log('   ── M4: would the RLA catch a flipped outcome? (the whole reason paper+RLA exists) ──');
+const reportedTally = [40, 20]; // reported (digital) 67–33 for candidate 0
+const honest = bravoBallotPolling(reportedTally, representativeSample([40, 20]), 0.05); // paper agrees
+const flipped = bravoBallotPolling(reportedTally, representativeSample([20, 40]), 0.05); // endpoint flipped it: paper truly favors the OTHER candidate
+console.log(`   honest  — paper agrees with the reported winner → ballot-polling CONFIRMS after ${honest.drawsExamined} sampled ballots (α=0.05).`);
+console.log(`   flipped — paper contradicts the reported winner → audit does NOT confirm (examined ${flipped.drawsExamined}) → escalate to full hand count → PAPER WINS, the flip is caught.`);
+console.log('   (illustrative BRAVO; a real deployment draws a random sample and runs VotingWorks Arlo / SHANGRLA.)\n');
 
 // Publish the transcripts so anyone can re-verify them from the public record alone.
 mkdirSync('out', { recursive: true });

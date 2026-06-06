@@ -288,3 +288,62 @@ export function bravoSampleSize(reportedTally: number[], alpha: number): { sampl
   const asn = Math.log(1 / alpha) / (sw * Math.log(2 * sw) + sl * Math.log(2 * sl));
   return { sampleSize: Math.ceil(asn), marginPct: total ? ((w - l) / total) * 100 : 0, note };
 }
+
+/**
+ * Illustrative BRAVO ballot-polling SEQUENTIAL test (Lindeman–Stark). Walks the hand-read PAPER ballots
+ * (`paper[i]` = candidate index, -1 = other/undervote) and runs the top-two likelihood-ratio test for the
+ * REPORTED winner vs the reported runner-up; CONFIRMS when the statistic reaches 1/alpha, else the audit
+ * escalates (does not confirm → full hand count). The point of the hybrid: if a compromised endpoint
+ * flipped the digital outcome, the paper contradicts the reported winner, the statistic never reaches the
+ * threshold, and the audit escalates — paper wins. NON-AUTHORITATIVE (top-two; ignores 3rd+ candidates;
+ * a real audit draws a random sample and runs Arlo/SHANGRLA); for demonstration only.
+ */
+export function bravoBallotPolling(reportedTally: number[], paper: number[], alpha: number, maxDraws?: number): { confirmed: boolean; drawsExamined: number; stat: number; reportedWinner: number; note: string } {
+  const note = 'ILLUSTRATIVE BRAVO ballot-polling sequential test (top-two); NOT authoritative — run Arlo/SHANGRLA on a random paper sample';
+  const reportedWinner = reportedTally.indexOf(Math.max(...reportedTally));
+  let loser = -1;
+  let lc = -1;
+  for (let c = 0; c < reportedTally.length; c++) if (c !== reportedWinner && reportedTally[c]! > lc) { lc = reportedTally[c]!; loser = c; }
+  const w = reportedTally[reportedWinner] ?? 0;
+  const l = loser >= 0 ? reportedTally[loser]! : 0;
+  if (w <= l || w + l === 0) return { confirmed: false, drawsExamined: 0, stat: 0, reportedWinner, note };
+  const sw = w / (w + l);
+  const sl = 1 - sw;
+  const target = 1 / alpha;
+  let t = 1;
+  let i = 0;
+  const limit = Math.min(paper.length, maxDraws ?? paper.length);
+  for (; i < limit; i++) {
+    const b = paper[i]!;
+    if (b === reportedWinner) t *= 2 * sw;
+    else if (b === loser) t *= 2 * sl;
+    // other candidates / undervotes contribute nothing to the two-way test
+    if (t >= target) { i++; break; }
+  }
+  return { confirmed: t >= target, drawsExamined: i, stat: t, reportedWinner, note };
+}
+
+/**
+ * A deterministic, proportionally-interleaved sequence over candidate `counts` — an illustration stand-in
+ * for a random paper sample (representative at every prefix, so a sequential test behaves like the steady
+ * state). A real audit draws ballots at random; this exists only to demonstrate confirm-vs-escalate.
+ */
+export function representativeSample(counts: number[]): number[] {
+  const total = counts.reduce((a, b) => a + b, 0);
+  const acc = counts.map(() => 0);
+  const rem = [...counts];
+  const out: number[] = [];
+  for (let k = 0; k < total; k++) {
+    let best = -1;
+    let bestScore = -Infinity;
+    for (let c = 0; c < counts.length; c++) {
+      if (rem[c]! <= 0) continue;
+      const score = (counts[c]! * (k + 1)) / total - acc[c]!; // largest-remainder round-robin
+      if (score > bestScore) { bestScore = score; best = c; }
+    }
+    out.push(best);
+    acc[best]! += 1;
+    rem[best]! -= 1;
+  }
+  return out;
+}

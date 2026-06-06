@@ -36,7 +36,8 @@ import { newSession, prepareBallot, challengeBallot, castBallot } from './sessio
 import { BulletinBoard } from './bulletin.js';
 import {
   makeManifest, buildAnchor, verifyAnchor, reportedResults, pollingExport, verifyExport,
-  pollingExportToJSON, pollingExportFromJSON, toArloManifestCsv, bravoSampleSize, type BatchRow,
+  pollingExportToJSON, pollingExportFromJSON, toArloManifestCsv, bravoSampleSize,
+  bravoBallotPolling, representativeSample, type BatchRow,
 } from './rla.js';
 import {
   transcriptToJSON, transcriptFromJSON, rankedTranscriptToJSON, rankedTranscriptFromJSON,
@@ -791,6 +792,12 @@ for (let trial = 0; trial < 40; trial++) {
 
   // Robustness: malformed anchor rejects without throwing (bad hex → caught).
   check(noThrow(() => verifyAnchor({ ...anchor, signerPub: 'zz'.repeat(32) }, manifest, exp).ok) === false, 'RLA anchor: a malformed anchor is rejected without throwing');
+
+  // M4 criterion (ADR-0004): an endpoint-flipped outcome is caught by the ballot-polling RLA against paper.
+  // Reported (digital) 40-20; honest paper agrees → audit confirms; flipped paper (true intent is the other
+  // candidate) contradicts the reported winner → the sequential test never confirms → escalate (flip caught).
+  check(bravoBallotPolling([40, 20], representativeSample([40, 20]), 0.05).confirmed, 'RLA M4: ballot-polling CONFIRMS the reported winner when the paper agrees');
+  check(bravoBallotPolling([40, 20], representativeSample([20, 40]), 0.05).confirmed === false, 'RLA M4: a flipped outcome (paper contradicts the reported winner) does NOT confirm — the audit escalates (flip caught)');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);
