@@ -35,7 +35,8 @@ function u32(n: number): Uint8Array {
   return new Uint8Array([(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff]);
 }
 const validU32 = (n: number): boolean => Number.isInteger(n) && n >= 0 && n <= 0xffffffff;
-const is32hex = (h: unknown): boolean => typeof h === 'string' && /^[0-9a-fA-F]{64}$/.test(h);
+// Canonical hex is LOWERCASE-ONLY (a mixed-case root is a different string that hashes/sorts differently).
+const is32hex = (h: unknown): boolean => typeof h === 'string' && /^[0-9a-f]{64}$/.test(h);
 
 /** Deterministic, locale- and runtime-independent byte-lexicographic comparison (UTF-8 of batchId). */
 function cmpBytes(a: Uint8Array, b: Uint8Array): number {
