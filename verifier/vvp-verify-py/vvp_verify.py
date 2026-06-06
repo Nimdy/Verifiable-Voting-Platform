@@ -179,9 +179,10 @@ def verify_bit(h, ct, p) -> bool:
     return True
 
 
-def verify_sum_one(h, agg, p) -> bool:
-    target = psub(agg["b"], G)
-    c = hash_to_scalar("sum-one", [h, agg["a"], agg["b"], p["Tg"], p["Th"]])
+def verify_sum_equal(h, agg, p, L) -> bool:
+    LG = smul(G, L)
+    target = psub(agg["b"], LG)  # equals h^R iff Σ votes == L
+    c = hash_to_scalar("sum-eq", [h, agg["a"], agg["b"], LG, p["Tg"], p["Th"]])
     if c != p["c"]:
         return False
     if smul(G, p["s"]) != padd(p["Tg"], smul(agg["a"], p["c"])):
@@ -245,7 +246,7 @@ def discrete_log(M, max_n: int):
     return None
 
 
-def selection_valid(pk, sel, K) -> bool:
+def selection_valid(pk, sel, K, L) -> bool:
     if len(sel["enc"]) != K or len(sel["bitProofs"]) != K:
         return False
     for j in range(K):
@@ -254,7 +255,7 @@ def selection_valid(pk, sel, K) -> bool:
     agg = {"a": ZERO, "b": ZERO}
     for c in sel["enc"]:
         agg = {"a": padd(agg["a"], c["a"]), "b": padd(agg["b"], c["b"])}
-    return verify_sum_one(pk, agg, sel["sumProof"])
+    return verify_sum_equal(pk, agg, sel["sumProof"], L)
 
 
 # ---- the verifier ----------------------------------------------------------
@@ -269,12 +270,14 @@ def verify(j):
     k = j["threshold"]
     n_trustees = j["trustees"]
     num_voters = j["numVoters"]
+    selection_limit = j["selectionLimit"]
 
     shape_ok = (
         K > 0 and isinstance(k, int) and k >= 1
         and isinstance(n_trustees, int) and n_trustees >= k
         # numVoters is attacker-controlled; pin it to the ballot count (discrete-log bound + sum target).
         and isinstance(num_voters, int) and num_voters == len(j["ballots"])
+        and isinstance(selection_limit, int) and 1 <= selection_limit <= K
         and len(j["commitments"]) == k
         and len(j["aggregates"]) == K and len(j["results"]) == K
         and all(len(b["selection"]["enc"]) == K and len(b["selection"]["bitProofs"]) == K for b in j["ballots"])
@@ -322,8 +325,8 @@ def verify(j):
         f"{inelig} ineligible, {bad_sig} bad sig" if (inelig or bad_sig) else None)
     add("No credential voted more than once (single-use nullifier)", dup == 0)
 
-    invalid = sum(0 if selection_valid(public_key, b["selection"], K) else 1 for b in ballots)
-    add("Every ballot selects exactly one candidate (zero-knowledge)", invalid == 0)
+    invalid = sum(0 if selection_valid(public_key, b["selection"], K, selection_limit) else 1 for b in ballots)
+    add(f"Every ballot selects exactly {selection_limit} candidate(s) (zero-knowledge)", invalid == 0)
 
     agg_bad = 0
     for jx in range(K):
@@ -361,7 +364,7 @@ def verify(j):
         results.append(m if m is not None else -1)
         if m != j["results"][jx]:
             tally_bad += 1
-    sum_ok = sum(results) == num_voters
+    sum_ok = sum(results) == selection_limit * num_voters
     add("Published per-candidate totals equal the decrypted aggregates", tally_bad == 0 and sum_ok,
         f"sum={sum(results)}")
 
