@@ -5,6 +5,7 @@ import {
   type VerifyResult, type Transcript, type Voter, type Credential,
 } from './engine';
 import Walkthrough from './Walkthrough';
+import Ballot from './Ballot';
 
 const CANDIDATES = ['Tacos 🌮', 'Pizza 🍕', 'Sushi 🍣', 'Salad 🥗'];
 const BAR = ['bg-emerald-400', 'bg-indigo-400', 'bg-amber-400', 'bg-rose-400'];
@@ -208,16 +209,17 @@ function Playground() {
 }
 
 export default function App() {
-  const [tab, setTab] = useState<'play' | 'walk'>('play');
+  const [tab, setTab] = useState<'play' | 'walk' | 'ballot'>('play');
   const tabCls = (on: boolean) =>
-    `rounded-lg px-4 py-1.5 text-sm font-semibold ${on ? 'bg-indigo-500 text-white' : 'text-slate-300 hover:text-white'}`;
+    `rounded-lg px-3 py-1.5 text-sm font-semibold ${on ? 'bg-indigo-500 text-white' : 'text-slate-300 hover:text-white'}`;
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-indigo-950 text-slate-100">
-      <nav className="sticky top-0 z-10 flex justify-center gap-2 border-b border-white/10 bg-slate-950/80 px-4 py-2 backdrop-blur">
+      <nav className="sticky top-0 z-10 flex flex-wrap justify-center gap-2 border-b border-white/10 bg-slate-950/80 px-4 py-2 backdrop-blur">
         <button onClick={() => setTab('play')} className={tabCls(tab === 'play')}>🎮 Playground</button>
         <button onClick={() => setTab('walk')} className={tabCls(tab === 'walk')}>🔬 How it works</button>
+        <button onClick={() => setTab('ballot')} className={tabCls(tab === 'ballot')}>🗂️ Drill-down ballot</button>
       </nav>
-      {tab === 'play' ? <Playground /> : <Walkthrough />}
+      {tab === 'play' ? <Playground /> : tab === 'walk' ? <Walkthrough /> : <Ballot />}
     </div>
   );
 }

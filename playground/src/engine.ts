@@ -6,6 +6,8 @@ import {
   signingBytes, boardBytes, electionContext, BulletinBoard, Registrar,
   type Transcript, type VerifyResult, type KeySetup, type Voter, type Credential,
   type VoterCredential, type BallotEntry, type Selection, type Point,
+  runStructuredElection, verifyStructured, childrenOf, allTags, isLeaf, leafContests,
+  type ElectionSpec, type ElectionResult, type ContestSpec, type StructuredVoter,
 } from '@engine';
 
 export type { Transcript, VerifyResult, KeySetup, Voter, Credential };
@@ -117,4 +119,45 @@ export function buildScenario(): Scenario {
   const spare = packets[7]!.credential; // registered but did not vote
   const transcript = runElection(contest, candidates, voters, keys, registrar.publishedRoll(), [1, 3, 5]);
   return { contest, candidates, keys, registrar, packets, voters, spare, transcript };
+}
+
+// ---- structured (hierarchical, tagged) ballot scenario for the drill-down UI -
+export { childrenOf, allTags, isLeaf, leafContests, verifyStructured };
+export type { ElectionSpec, ElectionResult, ContestSpec };
+
+export interface BallotScenario {
+  spec: ElectionSpec;
+  result: ElectionResult;
+  ok: boolean;
+  verified: Set<string>; // ids of contests that verified
+}
+
+export function buildBallotScenario(): BallotScenario {
+  const spec: ElectionSpec = {
+    title: 'Community decisions',
+    contests: [
+      { id: 'gov', title: '🏛️ Governance', tags: ['governance'] },
+      { id: 'chair', title: 'Board chair', tags: ['governance', 'leadership'], parent: 'gov', candidates: ['Ada', 'Grace', 'Alan'] },
+      { id: 'cadence', title: 'Meeting cadence', tags: ['governance'], parent: 'gov', candidates: ['Weekly', 'Biweekly', 'Monthly'] },
+      { id: 'budget', title: '💸 Budget', tags: ['budget'] },
+      { id: 'park', title: 'Park budget', tags: ['budget', 'parks'], parent: 'budget', candidates: ['Low', 'Mid', 'High'] },
+      { id: 'lib', title: 'Library hours', tags: ['budget'], parent: 'budget', candidates: ['Keep', 'Extend'] },
+      { id: 'fest', title: '🎉 Festival theme', tags: ['events'], candidates: ['Music', 'Food', 'Art'] },
+    ],
+  };
+  const keys = setupKeys(5, 3);
+  const reg = new Registrar();
+  const packets = reg.register(Array.from({ length: 6 }, (_, i) => ({ id: `m-${i + 1}` })));
+  const roll = reg.publishedRoll();
+  const leaves = leafContests(spec);
+  const voters: StructuredVoter[] = packets.map((pk, i) => {
+    const choices: Record<string, number> = {};
+    for (const c of leaves) {
+      if ((i + c.id.length) % 4 !== 0) choices[c.id] = (i + c.title.length) % c.candidates!.length; // most vote; some abstain
+    }
+    return { credential: pk.credential, choices };
+  });
+  const result = runStructuredElection(spec, voters, keys, roll);
+  const v = verifyStructured(result);
+  return { spec, result, ok: v.ok, verified: new Set(v.perContest.filter((p) => p.result.ok).map((p) => p.id)) };
 }
