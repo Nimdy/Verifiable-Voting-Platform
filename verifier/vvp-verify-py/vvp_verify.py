@@ -8,8 +8,9 @@ TypeScript reference verifier on every transcript, a single-implementation bug i
 either is far less likely to hide. It re-derives everything from the public record
 alone and trusts nothing about who produced it.
 
-Handles all three transcript kinds — plurality/multi-seat, ranked-choice (Borda),
-and ranked-choice IRV (mixnet) — dispatching on the transcript's own `kind` field.
+Handles all transcript kinds — plurality/multi-seat, ranked-choice (Borda),
+ranked-choice IRV (mixnet), and the paper+RLA hybrid export (rla-export) —
+dispatching on the transcript's own `kind` field.
 
     python3 vvp_verify.py <transcript.json>      # exit 0 = VERIFIED, 1 = REJECTED, 2 = usage
 
@@ -882,6 +883,77 @@ def verify_mixnet_irv(j):
     return ok, checks, (round0 if ok else None)
 
 
+# ---- paper + RLA hybrid anchor; mirrors reference/src/rla.ts -----------------
+def is32hex(h) -> bool:
+    return isinstance(h, str) and len(h) == 64 and all(c in "0123456789abcdefABCDEF" for c in h)
+
+
+def valid_u32(n) -> bool:
+    return isinstance(n, int) and not isinstance(n, bool) and 0 <= n <= 0xFFFFFFFF
+
+
+def batch_row_bytes(row) -> bytes:
+    idb = row["batchId"].encode()
+    return b"vvp-batch-v1" + u32(len(idb)) + idb + u32(row["ballotCount"])
+
+
+def ballot_manifest_root(m) -> str:
+    rows = sorted(m["batches"], key=lambda r: r["batchId"].encode())  # UTF-8 byte order (matches cmpBytes)
+    return mth([batch_row_bytes(r) for r in rows]).hex()
+
+
+def anchor_bytes(a) -> bytes:
+    cb = a["contest"].encode()
+    at = a["anchoredAt"].encode()
+    br = bytes.fromhex(a["boardRoot"])
+    pr = bytes.fromhex(a["paperManifestRoot"])
+    pk = bytes.fromhex(a["publicKey"])
+    sp = bytes.fromhex(a["signerPub"])
+    return (b"vvp-anchor-v1" + u32(len(cb)) + cb + u32(len(br)) + br + u32(len(pr)) + pr
+            + u32(a["numVoters"]) + u32(a["paperBallotsTotal"]) + u32(len(pk)) + pk + u32(len(sp)) + sp
+            + u32(len(at)) + at)
+
+
+def verify_anchor(a, manifest=None, expect=None):
+    checks = []
+
+    def add(name, ok, detail=None):
+        checks.append((name, ok, detail))
+
+    add("Anchor version is recognized", a.get("version") == "vvp-paper-anchor-1")
+    canon = (is32hex(a.get("boardRoot")) and is32hex(a.get("paperManifestRoot")) and is32hex(a.get("publicKey"))
+             and is32hex(a.get("signerPub")) and is32hex((a.get("sig") or {}).get("R"))
+             and valid_u32(a.get("numVoters")) and valid_u32(a.get("paperBallotsTotal")))
+    add("Anchor fields are canonically encoded (32-byte roots/keys, uint32 counts)", canon)
+    if not canon:
+        return False, checks, None
+    sig_ok = verify_sig(parse_point(a["signerPub"]), anchor_bytes(a), {"R": parse_point(a["sig"]["R"]), "s": parse_scalar(a["sig"]["s"])})
+    add("Anchor self-signature is valid (over all bound fields, incl. the signer key)", sig_ok)
+    if expect and expect.get("signerPub") is not None:
+        add("Anchor is signed by the PINNED election-authority key", a["signerPub"] == expect["signerPub"])
+    if manifest is not None:
+        add("Paper-manifest root matches the published batches", ballot_manifest_root(manifest) == a["paperManifestRoot"])
+        s = sum(b["ballotCount"] for b in manifest["batches"])
+        add("Manifest total = sum batch counts = anchor paper total", s == manifest["paperBallotsTotal"] and s == a["paperBallotsTotal"])
+    if expect:
+        add("Anchor binds the published digital transcript (board root, count, key)",
+            a["boardRoot"] == expect["boardRoot"] and a["numVoters"] == expect["numVoters"] and a["publicKey"] == expect["publicKey"])
+    reconciled = a["paperBallotsTotal"] == a["numVoters"]
+    add(f"Reconciliation: paper ballots ({a['paperBallotsTotal']}) = digital ballots ({a['numVoters']})", reconciled,
+        None if reconciled else "discrepancy — paper is the legal record; resolve by canvass/RLA (ADR-0004)")
+    return all(c[1] for c in checks), checks, None
+
+
+def verify_rla_export(j):
+    _, checks, _ = verify_anchor(j["anchor"], j.get("manifest"))
+    checks = list(checks)
+    rep = j["reported"]
+    checks.append(("Reported results bind the same contest as the anchor", rep["contest"] == j["anchor"]["contest"], None))
+    checks.append(("Reported tally is an aggregate ballot-polling result (no per-ballot CVR)",
+                   rep["auditMethod"] == "ballot-polling" and isinstance(rep["reportedTally"], list) and len(rep["reportedTally"]) == len(rep["candidates"]), None))
+    return all(c[1] for c in checks), checks, None
+
+
 def main():
     if len(sys.argv) < 2:
         print("usage: python3 vvp_verify.py <transcript.json>", file=sys.stderr)
@@ -891,7 +963,10 @@ def main():
             data = json.load(f)
         # the transcript's own `kind` field selects the verifier (default: plurality).
         kind = data.get("kind")
-        verifier = verify_mixnet_irv if kind == "mixnet-irv" else verify_ranked if kind == "ranked" else verify
+        verifier = (verify_rla_export if kind == "rla-export"
+                    else verify_mixnet_irv if kind == "mixnet-irv"
+                    else verify_ranked if kind == "ranked"
+                    else verify)
         ok, checks, results = verifier(data)
     except Exception as e:  # the trust root always emits a verdict
         print(f"❌ could not parse/verify: {e}")

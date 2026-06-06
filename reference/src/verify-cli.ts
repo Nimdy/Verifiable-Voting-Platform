@@ -13,6 +13,7 @@ import { transcriptFromJSON, rankedTranscriptFromJSON, mixnetIrvTranscriptFromJS
 import { verifyTranscript } from './verify.js';
 import { verifyRankedTranscript } from './ranked.js';
 import { verifyMixnetTranscript } from './mixnet-irv.js';
+import { pollingExportFromJSON, verifyExport } from './rla.js';
 
 const path = process.argv[2];
 if (!path) {
@@ -24,11 +25,13 @@ let result;
 try {
   const raw = readFileSync(path, 'utf8');
   const kind: unknown = JSON.parse(raw).kind;
-  result = kind === 'mixnet-irv'
-    ? verifyMixnetTranscript(mixnetIrvTranscriptFromJSON(raw))
-    : kind === 'ranked'
-      ? verifyRankedTranscript(rankedTranscriptFromJSON(raw))
-      : verifyTranscript(transcriptFromJSON(raw));
+  result = kind === 'rla-export'
+    ? verifyExport(pollingExportFromJSON(raw))
+    : kind === 'mixnet-irv'
+      ? verifyMixnetTranscript(mixnetIrvTranscriptFromJSON(raw))
+      : kind === 'ranked'
+        ? verifyRankedTranscript(rankedTranscriptFromJSON(raw))
+        : verifyTranscript(transcriptFromJSON(raw));
 } catch (err) {
   console.error(`❌ Could not parse/verify transcript: ${String(err)}`);
   process.exit(1);

@@ -23,7 +23,7 @@ import {
 } from './structured.js';
 import { runRankedElection, verifyRankedTranscript, type RankedVoter } from './ranked.js';
 import { runMixnetElection, verifyMixnetTranscript, type MixnetVoter } from './mixnet-irv.js';
-import { makeManifest, buildAnchor, verifyAnchor, toArloManifestCsv, bravoSampleSize, type BatchRow } from './rla.js';
+import { makeManifest, buildAnchor, verifyAnchor, reportedResults, pollingExport, pollingExportToJSON, toArloManifestCsv, bravoSampleSize, type BatchRow } from './rla.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { verifyTranscript, type VerifyResult } from './verify.js';
 
@@ -219,16 +219,20 @@ console.log('     ' + toArloManifestCsv(manifest).split('\n').join('\n     '));
 const bravo = bravoSampleSize(t.results, 0.05);
 console.log(`   Illustrative ballot-polling sample (α=0.05): ~${bravo.sampleSize} paper ballots, margin ${bravo.marginPct.toFixed(0)}% — NOT authoritative; Arlo/SHANGRLA decide.`);
 console.log('   ⚠ Paper is the legal record; the RLA on paper is what catches an endpoint/tabulation flip. Digital ≠ software independence (ADR-0004).\n');
+const rlaWinner = t.results.indexOf(Math.max(...t.results));
+const rlaExport = pollingExport(anchor, manifest, reportedResults(t.contest, t.candidates, 'plurality', t.results, t.numVoters, rlaWinner));
 
 // Publish the transcripts so anyone can re-verify them from the public record alone.
 mkdirSync('out', { recursive: true });
 writeFileSync('out/transcript.json', transcriptToJSON(t));
 writeFileSync('out/ranked.json', rankedTranscriptToJSON(rkT));
 writeFileSync('out/mixnet-irv.json', mixnetIrvTranscriptToJSON(irvT));
+writeFileSync('out/rla-export.json', pollingExportToJSON(rlaExport));
 console.log('Public transcripts written to reference/out/ — verify them yourself:');
 console.log('  npm run verify -- out/transcript.json   (plurality)');
 console.log('  npm run verify -- out/ranked.json        (ranked-choice Borda)');
-console.log('  npm run verify -- out/mixnet-irv.json    (ranked-choice IRV / mixnet)\n');
+console.log('  npm run verify -- out/mixnet-irv.json    (ranked-choice IRV / mixnet)');
+console.log('  npm run verify -- out/rla-export.json    (paper + RLA hybrid anchor)\n');
 
 line('━');
 console.log('  Summary: the honest election verifies; every insider attack is caught.');

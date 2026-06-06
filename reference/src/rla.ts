@@ -211,13 +211,34 @@ export function reportedResults(contest: string, candidates: string[], tallyKind
 
 export interface BallotPollingExport {
   version: 'vvp-bp-export-1';
+  kind: 'rla-export'; // discriminator so a reader/CLI dispatches to the right verifier from the file alone
   anchor: PaperAnchor;
   manifest: BallotManifest;
   reported: ReportedResults; // carries ONLY totals — never a per-ballot CVR (privacy)
 }
 
 export function pollingExport(anchor: PaperAnchor, manifest: BallotManifest, reported: ReportedResults): BallotPollingExport {
-  return { version: 'vvp-bp-export-1', anchor, manifest, reported };
+  return { version: 'vvp-bp-export-1', kind: 'rla-export', anchor, manifest, reported };
+}
+
+/**
+ * Verify a published RLA export from the file alone (never throws): the anchor (signature, canonical
+ * encodings, manifest root, optional transcript binding + authority pinning, reconciliation) plus that
+ * the reported results bind the same contest and are an aggregate ballot-polling tally (no per-ballot CVR).
+ */
+export function verifyExport(e: BallotPollingExport, expect?: { boardRoot: string; numVoters: number; publicKey: string; signerPub?: string }): VerifyResult {
+  try {
+    const base = verifyAnchor(e.anchor, e.manifest, expect);
+    const checks: Check[] = [...base.checks];
+    checks.push({ name: 'Reported results bind the same contest as the anchor', ok: e.reported.contest === e.anchor.contest });
+    checks.push({
+      name: 'Reported tally is an aggregate ballot-polling result (no per-ballot CVR)',
+      ok: e.reported.auditMethod === 'ballot-polling' && Array.isArray(e.reported.reportedTally) && e.reported.reportedTally.length === e.reported.candidates.length,
+    });
+    return { ok: checks.every((c) => c.ok), checks, results: null };
+  } catch (err) {
+    return { ok: false, results: null, checks: [{ name: 'Export is well-formed (no exception)', ok: false, detail: String(err) }] };
+  }
 }
 
 // Plain-JSON (de)serialization — every field is already a string/number, so a published export is a

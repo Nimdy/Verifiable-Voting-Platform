@@ -35,7 +35,7 @@ import { dkg, combineShares, verificationKeyAt } from './threshold.js';
 import { newSession, prepareBallot, challengeBallot, castBallot } from './session.js';
 import { BulletinBoard } from './bulletin.js';
 import {
-  makeManifest, buildAnchor, verifyAnchor, reportedResults, pollingExport,
+  makeManifest, buildAnchor, verifyAnchor, reportedResults, pollingExport, verifyExport,
   pollingExportToJSON, pollingExportFromJSON, toArloManifestCsv, bravoSampleSize, type BatchRow,
 } from './rla.js';
 import {
@@ -782,6 +782,8 @@ for (let trial = 0; trial < 40; trial++) {
   check(!/"choice"|"selection"|cvr|plaintext|"ranking"|enc"|credentialPub/i.test(j), 'RLA export: secret-ballot export contains no per-ballot CVR / voter-linked field');
   check(e.reported.reportedTally.length === cands.length && e.reported.auditMethod === 'ballot-polling', 'RLA export: reported tally is an aggregate, audit method forced to ballot-polling');
   check(verifyAnchor(pollingExportFromJSON(j).anchor, pollingExportFromJSON(j).manifest, exp).ok, 'RLA export: round-trips through JSON and re-verifies');
+  check(e.kind === 'rla-export' && verifyExport(pollingExportFromJSON(j), exp).ok, 'RLA export: verifyExport accepts the round-tripped export (kind discriminator + reported binding)');
+  check(verifyExport({ ...e, reported: { ...reported, contest: 'Other' } }, exp).ok === false, 'RLA export: a reported-contest mismatch is rejected by verifyExport');
 
   // Arlo manifest CSV + illustrative BRAVO.
   check(toArloManifestCsv(manifest).split('\n')[0] === 'Container,Tabulator,Batch Name,Number of Ballots', 'RLA export: Arlo ballot-manifest CSV header is correct');
