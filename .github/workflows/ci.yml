@@ -47,10 +47,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Produce a transcript with the TypeScript engine
+      - name: Produce transcripts with the TypeScript engine
         run: npm install && npm run demo
+        working-directory: reference
+      - name: Re-verify both transcripts with the TypeScript CLI (from file alone)
+        run: |
+          npm run verify -- out/transcript.json
+          npm run verify -- out/ranked.json
         working-directory: reference
       - name: Install libsodium + pysodium
         run: sudo apt-get update && sudo apt-get install -y libsodium23 && pip install pysodium
-      - name: Independently verify the transcript (Python/libsodium)
+      - name: Independently verify the plurality transcript (Python/libsodium)
         run: python verifier/vvp-verify-py/vvp_verify.py reference/out/transcript.json
+      - name: Independently verify the ranked transcript (Python/libsodium)
+        run: python verifier/vvp-verify-py/vvp_verify.py reference/out/ranked.json

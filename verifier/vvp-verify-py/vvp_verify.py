@@ -8,6 +8,9 @@ TypeScript reference verifier on every transcript, a single-implementation bug i
 either is far less likely to hide. It re-derives everything from the public record
 alone and trusts nothing about who produced it.
 
+Handles both transcript kinds — plurality/multi-seat and ranked-choice (Borda) —
+dispatching on the transcript's own `kind` field.
+
     python3 vvp_verify.py <transcript.json>      # exit 0 = VERIFIED, 1 = REJECTED, 2 = usage
 
 Requires: pysodium + a system libsodium.  (pip install pysodium)
@@ -258,6 +261,72 @@ def selection_valid(pk, sel, K, L) -> bool:
     return verify_sum_equal(pk, agg, sel["sumProof"], L)
 
 
+# ---- ranked-choice (Borda): mirrors reference/src/ranked.ts -----------------
+def parse_ranked_ballot(j):
+    return {
+        "matrix": [[parse_ct(c) for c in row] for row in j["matrix"]],
+        "bitProofs": [[parse_bit(b) for b in row] for row in j["bitProofs"]],
+        "rowSums": [parse_sum(s) for s in j["rowSums"]],
+        "colSums": [parse_sum(s) for s in j["colSums"]],
+    }
+
+
+def ranked_signing_bytes(ctx: bytes, b) -> bytes:
+    K = len(b["matrix"])
+    out = ctx + u32(K)
+    for i in range(K):
+        for r in range(K):
+            ct = b["matrix"][i][r]
+            out += ct["a"] + ct["b"] + bit_bytes(b["bitProofs"][i][r])
+    for i in range(K):
+        out += sum_bytes(b["rowSums"][i])
+    for r in range(K):
+        out += sum_bytes(b["colSums"][r])
+    return out
+
+
+def ranked_board_bytes(ctx: bytes, cred: bytes, b, sig) -> bytes:
+    return cred + ranked_signing_bytes(ctx, b) + sig["R"] + scalar_be(sig["s"])
+
+
+def verify_ranking_valid(pk, b) -> bool:
+    K = len(b["matrix"])
+    if K == 0 or len(b["bitProofs"]) != K or len(b["rowSums"]) != K or len(b["colSums"]) != K:
+        return False
+    for i in range(K):
+        if len(b["matrix"][i]) != K or len(b["bitProofs"][i]) != K:
+            return False
+        for r in range(K):
+            if not verify_bit(pk, b["matrix"][i][r], b["bitProofs"][i][r]):
+                return False
+    for i in range(K):  # every row (candidate) gets exactly one rank
+        agg = {"a": ZERO, "b": ZERO}
+        for c in b["matrix"][i]:
+            agg = {"a": padd(agg["a"], c["a"]), "b": padd(agg["b"], c["b"])}
+        if not verify_sum_equal(pk, agg, b["rowSums"][i], 1):
+            return False
+    for r in range(K):  # every column (rank) goes to exactly one candidate
+        agg = {"a": ZERO, "b": ZERO}
+        for row in b["matrix"]:
+            agg = {"a": padd(agg["a"], row[r]["a"]), "b": padd(agg["b"], row[r]["b"])}
+        if not verify_sum_equal(pk, agg, b["colSums"][r], 1):
+            return False
+    return True
+
+
+def borda_ballot_totals(b):
+    """Candidate i -> Sum_r (K-1-r)*M[i][r], a public-weight linear combo of verified ciphertexts."""
+    K = len(b["matrix"])
+    out = []
+    for row in b["matrix"]:
+        acc = {"a": ZERO, "b": ZERO}
+        for r in range(K):
+            w = K - 1 - r
+            acc = {"a": padd(acc["a"], smul(row[r]["a"], w)), "b": padd(acc["b"], smul(row[r]["b"], w))}
+        out.append(acc)
+    return out
+
+
 # ---- the verifier ----------------------------------------------------------
 def verify(j):
     checks = []
@@ -372,6 +441,128 @@ def verify(j):
     return ok, checks, (results if tally_bad == 0 else None)
 
 
+# ---- the ranked-choice (Borda) verifier; mirrors verifyRankedInner ----------
+def verify_ranked(j):
+    checks = []
+
+    def add(name, ok, detail=None):
+        checks.append((name, ok, detail))
+
+    candidates = j["candidates"]
+    K = len(candidates)
+    k = j["threshold"]
+    n_trustees = j["trustees"]
+    num_voters = j["numVoters"]
+
+    def square(b):  # every ranked ballot must be exactly K x K
+        m = b["ballot"]
+        return (
+            len(m["matrix"]) == K and all(len(row) == K for row in m["matrix"])
+            and len(m["bitProofs"]) == K and all(len(row) == K for row in m["bitProofs"])
+            and len(m["rowSums"]) == K and len(m["colSums"]) == K
+        )
+
+    shape_ok = (
+        K > 0 and isinstance(k, int) and k >= 1
+        and isinstance(n_trustees, int) and n_trustees >= k
+        # numVoters is attacker-controlled; pin it to the ballot count (discrete-log bound + sum target).
+        and isinstance(num_voters, int) and num_voters == len(j["ballots"])
+        and len(j["commitments"]) == k
+        and len(j["bordaAggregates"]) == K and len(j["results"]) == K
+        and all(len(d["shares"]) == K and len(d["proofs"]) == K for d in j["decShares"])
+        and all(square(b) for b in j["ballots"])
+    )
+    add("Transcript shape: K aggregates, k commitments, numVoters = ballots", shape_ok)
+    if not shape_ok:
+        return False, checks, None
+
+    commitments = [parse_point(c) for c in j["commitments"]]
+    public_key = parse_point(j["publicKey"])
+    eligible = {parse_point(c) for c in j["eligibleRoll"]}
+    ctx = election_context(j["contest"], public_key, candidates)
+
+    ballots = [{
+        "voter": b["voter"], "credentialPub": parse_point(b["credentialPub"]),
+        "ballot": parse_ranked_ballot(b["ballot"]),
+        "sig": {"R": parse_point(b["sig"]["R"]), "s": parse_scalar(b["sig"]["s"])},
+    } for b in j["ballots"]]
+    borda_aggregates = [parse_ct(c) for c in j["bordaAggregates"]]
+    dec_shares = [{
+        "trusteeIndex": d["trusteeIndex"],
+        "shares": [parse_point(s) for s in d["shares"]],
+        "proofs": [parse_dec(p) for p in d["proofs"]],
+    } for d in j["decShares"]]
+
+    add("Joint public key = commitment C0 (threshold key)", commitments[0] == public_key)
+
+    root = mth([ranked_board_bytes(ctx, b["credentialPub"], b["ballot"], b["sig"]) for b in ballots]).hex()
+    add("Bulletin-board Merkle root matches the published ballots", root == j["boardRoot"])
+
+    add("Eligible roll has no duplicate credentials", len(eligible) == len(j["eligibleRoll"]))
+
+    seen = set()
+    inelig = bad_sig = dup = 0
+    for b in ballots:
+        key = b["credentialPub"]
+        if key not in eligible:
+            inelig += 1
+        if not verify_sig(b["credentialPub"], ranked_signing_bytes(ctx, b["ballot"]), b["sig"]):
+            bad_sig += 1
+        if key in seen:
+            dup += 1
+        seen.add(key)
+    add("Every ballot is signed by an eligible voter credential", inelig == 0 and bad_sig == 0,
+        f"{inelig} ineligible, {bad_sig} bad sig" if (inelig or bad_sig) else None)
+    add("No credential voted more than once (single-use nullifier)", dup == 0)
+
+    invalid = sum(0 if verify_ranking_valid(public_key, b["ballot"]) else 1 for b in ballots)
+    add("Every ballot is a valid strict ranking (permutation matrix)", invalid == 0)
+
+    per_ballot = [borda_ballot_totals(b["ballot"]) for b in ballots]
+    agg_bad = 0
+    for i in range(K):
+        acc = {"a": ZERO, "b": ZERO}
+        for pb in per_ballot:
+            acc = {"a": padd(acc["a"], pb[i]["a"]), "b": padd(acc["b"], pb[i]["b"])}
+        if acc["a"] != borda_aggregates[i]["a"] or acc["b"] != borda_aggregates[i]["b"]:
+            agg_bad += 1
+    add("Borda aggregates = homomorphic Borda sum of the ballots", agg_bad == 0)
+
+    indices = [d["trusteeIndex"] for d in dec_shares]
+    distinct = len(set(indices)) == len(indices)
+    registered = all(isinstance(i, int) and 1 <= i <= n_trustees for i in indices)
+    add(f"Decryption quorum: >= {k} distinct registered trustees (1..{n_trustees})",
+        distinct and registered and len(dec_shares) >= k)
+
+    bad_shares = 0
+    for d in dec_shares:
+        if not (isinstance(d["trusteeIndex"], int) and 1 <= d["trusteeIndex"] <= n_trustees):
+            bad_shares += K
+            continue
+        pub = verification_key_at(commitments, d["trusteeIndex"])
+        for i in range(K):
+            if not verify_decryption(borda_aggregates[i]["a"], pub, d["shares"][i], d["proofs"][i]):
+                bad_shares += 1
+    add("Every trustee decryption share is provably honest", bad_shares == 0)
+
+    valid = [d for d in dec_shares if isinstance(d["trusteeIndex"], int) and 1 <= d["trusteeIndex"] <= n_trustees]
+    max_borda = (K - 1) * num_voters
+    results = []
+    tally_bad = 0
+    for i in range(K):
+        combined = combine_shares([(d["trusteeIndex"], d["shares"][i]) for d in valid])
+        m = discrete_log(psub(borda_aggregates[i]["b"], combined), max_borda)
+        results.append(m if m is not None else -1)
+        if m != j["results"][i]:
+            tally_bad += 1
+    expected_sum = num_voters * (K * (K - 1) // 2)  # each ballot distributes 0+1+...+(K-1) Borda points
+    sum_ok = sum(results) == expected_sum
+    add("Borda totals equal the decrypted aggregates", tally_bad == 0 and sum_ok, f"sum={sum(results)}")
+
+    ok = all(c[1] for c in checks)
+    return ok, checks, (results if tally_bad == 0 else None)
+
+
 def main():
     if len(sys.argv) < 2:
         print("usage: python3 vvp_verify.py <transcript.json>", file=sys.stderr)
@@ -379,7 +570,9 @@ def main():
     try:
         with open(sys.argv[1]) as f:
             data = json.load(f)
-        ok, checks, results = verify(data)
+        # the transcript's own `kind` field selects the verifier (default: plurality).
+        verifier = verify_ranked if data.get("kind") == "ranked" else verify
+        ok, checks, results = verifier(data)
     except Exception as e:  # the trust root always emits a verdict
         print(f"❌ could not parse/verify: {e}")
         sys.exit(1)

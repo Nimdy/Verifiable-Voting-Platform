@@ -4,42 +4,65 @@
 // re-verify from the public record alone (no shared in-memory state). Every group
 // element is validated on parse (pointFromHex throws on a bad encoding), giving the
 // deserialization-boundary input validation a networked deployment needs. This is
-// also the wire format a future independent cross-language verifier will consume.
+// also the wire format the independent cross-language verifier (Python) consumes.
+//
+// Two transcript kinds share these encoders: plurality/multi-seat (`Transcript`,
+// version `vvp-transcript-1`) and ranked-choice Borda (`RankedTranscript`, version
+// `vvp-ranked-transcript-1`, with a `kind: "ranked"` discriminator so a reader can
+// dispatch to the right verifier from the file alone).
 
 import { pointToHex, pointFromHex } from './group.js';
 import type { Transcript, Selection } from './election.js';
+import type { RankedTranscript, RankedBallot } from './ranked.js';
+import type { Ciphertext } from './elgamal.js';
+import type { BitProof, SumProof, DecProof } from './proofs.js';
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 const P = pointToHex;
 const p = pointFromHex;
 const S = (x: bigint): string => x.toString();
 const s = (x: string): bigint => BigInt(x);
 
+// --- shared element encoders (one source of truth for every group element) ---
+const ctToJ = (c: Ciphertext): unknown => ({ a: P(c.a), b: P(c.b) });
+const ctFromJ = (j: any): Ciphertext => ({ a: p(j.a), b: p(j.b) });
+
+const bitToJ = (bp: BitProof): unknown => ({
+  T0g: P(bp.T0g), T0h: P(bp.T0h), T1g: P(bp.T1g), T1h: P(bp.T1h),
+  c0: S(bp.c0), c1: S(bp.c1), s0: S(bp.s0), s1: S(bp.s1),
+});
+const bitFromJ = (j: any): BitProof => ({
+  T0g: p(j.T0g), T0h: p(j.T0h), T1g: p(j.T1g), T1h: p(j.T1h),
+  c0: s(j.c0), c1: s(j.c1), s0: s(j.s0), s1: s(j.s1),
+});
+
+const sumToJ = (sp: SumProof): unknown => ({ Tg: P(sp.Tg), Th: P(sp.Th), c: S(sp.c), s: S(sp.s) });
+const sumFromJ = (j: any): SumProof => ({ Tg: p(j.Tg), Th: p(j.Th), c: s(j.c), s: s(j.s) });
+
+const decToJ = (pr: DecProof): unknown => ({ Tg: P(pr.Tg), Ta: P(pr.Ta), c: S(pr.c), s: S(pr.s) });
+const decFromJ = (j: any): DecProof => ({ Tg: p(j.Tg), Ta: p(j.Ta), c: s(j.c), s: s(j.s) });
+
 function selToJ(sel: Selection): unknown {
   return {
-    enc: sel.enc.map((c) => ({ a: P(c.a), b: P(c.b) })),
-    bitProofs: sel.bitProofs.map((bp) => ({
-      T0g: P(bp.T0g), T0h: P(bp.T0h), T1g: P(bp.T1g), T1h: P(bp.T1h),
-      c0: S(bp.c0), c1: S(bp.c1), s0: S(bp.s0), s1: S(bp.s1),
-    })),
-    sumProof: { Tg: P(sel.sumProof.Tg), Th: P(sel.sumProof.Th), c: S(sel.sumProof.c), s: S(sel.sumProof.s) },
+    enc: sel.enc.map(ctToJ),
+    bitProofs: sel.bitProofs.map(bitToJ),
+    sumProof: sumToJ(sel.sumProof),
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function selFromJ(j: any): Selection {
   return {
-    enc: j.enc.map((c: any) => ({ a: p(c.a), b: p(c.b) })),
-    bitProofs: j.bitProofs.map((bp: any) => ({
-      T0g: p(bp.T0g), T0h: p(bp.T0h), T1g: p(bp.T1g), T1h: p(bp.T1h),
-      c0: s(bp.c0), c1: s(bp.c1), s0: s(bp.s0), s1: s(bp.s1),
-    })),
-    sumProof: { Tg: p(j.sumProof.Tg), Th: p(j.sumProof.Th), c: s(j.sumProof.c), s: s(j.sumProof.s) },
+    enc: j.enc.map(ctFromJ),
+    bitProofs: j.bitProofs.map(bitFromJ),
+    sumProof: sumFromJ(j.sumProof),
   };
 }
 
 export function transcriptToJSON(t: Transcript): string {
   return JSON.stringify({
     version: 'vvp-transcript-1',
+    kind: 'plurality',
     contest: t.contest,
     candidates: t.candidates,
     numVoters: t.numVoters,
@@ -56,18 +79,17 @@ export function transcriptToJSON(t: Transcript): string {
       sig: { R: P(b.sig.R), s: S(b.sig.s) },
     })),
     boardRoot: t.boardRoot,
-    aggregates: t.aggregates.map((c) => ({ a: P(c.a), b: P(c.b) })),
+    aggregates: t.aggregates.map(ctToJ),
     decShares: t.decShares.map((d) => ({
       trusteeIndex: d.trusteeIndex,
       shares: d.shares.map(P),
-      proofs: d.proofs.map((pr) => ({ Tg: P(pr.Tg), Ta: P(pr.Ta), c: S(pr.c), s: S(pr.s) })),
+      proofs: d.proofs.map(decToJ),
     })),
     results: t.results,
   }, null, 2);
 }
 
 export function transcriptFromJSON(json: string): Transcript {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const j: any = JSON.parse(json);
   return {
     contest: j.contest,
@@ -86,11 +108,87 @@ export function transcriptFromJSON(json: string): Transcript {
       sig: { R: p(b.sig.R), s: s(b.sig.s) },
     })),
     boardRoot: j.boardRoot,
-    aggregates: j.aggregates.map((c: any) => ({ a: p(c.a), b: p(c.b) })),
+    aggregates: j.aggregates.map(ctFromJ),
     decShares: j.decShares.map((d: any) => ({
       trusteeIndex: d.trusteeIndex,
       shares: d.shares.map(p),
-      proofs: d.proofs.map((pr: any) => ({ Tg: p(pr.Tg), Ta: p(pr.Ta), c: s(pr.c), s: s(pr.s) })),
+      proofs: d.proofs.map(decFromJ),
+    })),
+    results: j.results,
+  };
+}
+
+// --- ranked-choice (Borda) transcript --------------------------------------
+function rankedBallotToJ(b: RankedBallot): unknown {
+  return {
+    matrix: b.matrix.map((row) => row.map(ctToJ)),
+    bitProofs: b.bitProofs.map((row) => row.map(bitToJ)),
+    rowSums: b.rowSums.map(sumToJ),
+    colSums: b.colSums.map(sumToJ),
+  };
+}
+
+function rankedBallotFromJ(j: any): RankedBallot {
+  return {
+    matrix: j.matrix.map((row: any[]) => row.map(ctFromJ)),
+    bitProofs: j.bitProofs.map((row: any[]) => row.map(bitFromJ)),
+    rowSums: j.rowSums.map(sumFromJ),
+    colSums: j.colSums.map(sumFromJ),
+  };
+}
+
+export function rankedTranscriptToJSON(t: RankedTranscript): string {
+  return JSON.stringify({
+    version: 'vvp-ranked-transcript-1',
+    kind: 'ranked',
+    contest: t.contest,
+    candidates: t.candidates,
+    numVoters: t.numVoters,
+    eligibleRoll: t.eligibleRoll.map(P),
+    publicKey: P(t.publicKey),
+    commitments: t.commitments.map(P),
+    trustees: t.trustees,
+    threshold: t.threshold,
+    ballots: t.ballots.map((b) => ({
+      voter: b.voter,
+      credentialPub: P(b.credentialPub),
+      ballot: rankedBallotToJ(b.ballot),
+      sig: { R: P(b.sig.R), s: S(b.sig.s) },
+    })),
+    boardRoot: t.boardRoot,
+    bordaAggregates: t.bordaAggregates.map(ctToJ),
+    decShares: t.decShares.map((d) => ({
+      trusteeIndex: d.trusteeIndex,
+      shares: d.shares.map(P),
+      proofs: d.proofs.map(decToJ),
+    })),
+    results: t.results,
+  }, null, 2);
+}
+
+export function rankedTranscriptFromJSON(json: string): RankedTranscript {
+  const j: any = JSON.parse(json);
+  return {
+    contest: j.contest,
+    candidates: j.candidates,
+    numVoters: j.numVoters,
+    eligibleRoll: j.eligibleRoll.map(p),
+    publicKey: p(j.publicKey),
+    commitments: j.commitments.map(p),
+    trustees: j.trustees,
+    threshold: j.threshold,
+    ballots: j.ballots.map((b: any) => ({
+      voter: b.voter,
+      credentialPub: p(b.credentialPub),
+      ballot: rankedBallotFromJ(b.ballot),
+      sig: { R: p(b.sig.R), s: s(b.sig.s) },
+    })),
+    boardRoot: j.boardRoot,
+    bordaAggregates: j.bordaAggregates.map(ctFromJ),
+    decShares: j.decShares.map((d: any) => ({
+      trusteeIndex: d.trusteeIndex,
+      shares: d.shares.map(p),
+      proofs: d.proofs.map(decFromJ),
     })),
     results: j.results,
   };

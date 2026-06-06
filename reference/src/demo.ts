@@ -16,7 +16,7 @@ import {
   type Transcript, type Voter, type BallotEntry, type Selection,
 } from './election.js';
 import { newSession, prepareBallot, challengeBallot, castBallot } from './session.js';
-import { transcriptToJSON } from './transcript-json.js';
+import { transcriptToJSON, rankedTranscriptToJSON } from './transcript-json.js';
 import {
   runStructuredElection, verifyStructured, childrenOf, allTags, isLeaf,
   type ElectionSpec, type StructuredVoter,
@@ -188,11 +188,13 @@ console.log('   Borda totals: ' + rkCands.map((c, i) => `${c} ${rkT.results[i]}`
 console.log(`   ${rkV.ok ? '🟢 VERIFIED' : '🔴 REJECTED'} — each ballot a valid permutation matrix; Borda tally threshold-decrypted by 3 of 5 trustees.`);
 console.log('   (True IRV elimination still needs a verifiable mixnet — #49.)\n');
 
-// Publish the transcript so anyone can re-verify it from the public record alone.
+// Publish the transcripts so anyone can re-verify them from the public record alone.
 mkdirSync('out', { recursive: true });
 writeFileSync('out/transcript.json', transcriptToJSON(t));
-console.log('Public transcript written to reference/out/transcript.json — verify it yourself:');
-console.log('  npm run verify -- out/transcript.json\n');
+writeFileSync('out/ranked.json', rankedTranscriptToJSON(rkT));
+console.log('Public transcripts written to reference/out/ — verify them yourself:');
+console.log('  npm run verify -- out/transcript.json   (plurality)');
+console.log('  npm run verify -- out/ranked.json        (ranked-choice Borda)\n');
 
 line('━');
 console.log('  Summary: the honest election verifies; every insider attack is caught.');

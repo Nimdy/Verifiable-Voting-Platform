@@ -24,7 +24,9 @@ import {
 } from './election.js';
 import { dkg, combineShares, verificationKeyAt } from './threshold.js';
 import { newSession, prepareBallot, challengeBallot, castBallot } from './session.js';
-import { transcriptToJSON, transcriptFromJSON } from './transcript-json.js';
+import {
+  transcriptToJSON, transcriptFromJSON, rankedTranscriptToJSON, rankedTranscriptFromJSON,
+} from './transcript-json.js';
 import { verifyTranscript } from './verify.js';
 
 let pass = 0;
@@ -431,6 +433,36 @@ for (let trial = 0; trial < 40; trial++) {
   check(verifyRankedTranscript(runRankedElection('rank', cands, dbl, keys, roll)).ok === false, 'ranked: a double vote is rejected');
   const wrongDim = { ...t, ballots: t.ballots.map((b, i) => (i === 0 ? { ...b, ballot: { ...b.ballot, colSums: [...b.ballot.colSums, b.ballot.colSums[0]!] } } : b)) };
   check(verifyRankedTranscript(wrongDim).ok === false, 'ranked: a wrong-dimension ballot is rejected at the shape gate');
+}
+
+// 18. Ranked transcript JSON round-trips and re-verifies from the published record
+//     alone; tampering the published file is caught; bad point encodings reject on parse.
+{
+  const keys = setupKeys(5, 3);
+  const r = new Registrar();
+  const packets = r.register([{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }]);
+  const roll = r.publishedRoll();
+  const cands = ['w', 'x', 'y', 'z'];
+  const voters: RankedVoter[] = packets.map((pk, i) => ({ credential: pk.credential, ranking: [0, 1, 2, 3].map((x) => (x + i) % 4) }));
+  const t = runRankedElection('rank-json', cands, voters, keys, roll, [1, 3, 5]);
+
+  const round = rankedTranscriptFromJSON(rankedTranscriptToJSON(t));
+  const rr = verifyRankedTranscript(round);
+  check(rr.ok, 'round-tripped ranked transcript verifies');
+  check(JSON.stringify(rr.results) === JSON.stringify(t.results), 'round-tripped ranked results match');
+
+  const obj = JSON.parse(rankedTranscriptToJSON(t));
+  check(obj.kind === 'ranked', 'ranked transcript carries kind discriminator');
+  obj.results[0] = obj.results[0] + 5; // tamper the published Borda totals
+  let okTamper = true;
+  try { okTamper = verifyRankedTranscript(rankedTranscriptFromJSON(JSON.stringify(obj))).ok; } catch { okTamper = false; }
+  check(okTamper === false, 'tampering a published ranked total is caught');
+
+  const obj2 = JSON.parse(rankedTranscriptToJSON(t));
+  obj2.ballots[0].ballot.matrix[0][0].a = 'zz'.repeat(32); // invalid point encoding
+  let parseThrew = false;
+  try { rankedTranscriptFromJSON(JSON.stringify(obj2)); } catch { parseThrew = true; }
+  check(parseThrew, 'a bad point encoding in a ranked ballot is rejected on parse');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);
