@@ -22,7 +22,7 @@ The live app has three views: **🎮 Playground** (run an election, **audit your
 A complete, fuzz-tested (~4,700 trials) reference engine in [`reference/`](reference) — *trust root is cryptography, not a chain*:
 
 - **Eligibility & one-vote-per-voter** — Belenios-style credentials + single-use nullifiers, with a **registrar that separates identity from ballot** (no single party links a person to their vote).
-- **Ballots** — multi-candidate (1-of-K) with a zero-knowledge *exactly-one-selected* proof, and **hierarchical, tagged multi-contest** ballots (parent groups → drill-down leaf contests). *(Ranked-choice IRV via a verifiable mixnet is the next crypto milestone — [#49](https://github.com/Nimdy/voting-system-blockchain/issues/49).)*
+- **Ballots** — multi-candidate (1-of-K), **multi-seat "vote for exactly N"** (block voting), and **hierarchical, tagged multi-contest** ballots (parent groups → drill-down leaf contests), each with zero-knowledge validity proofs. *(Ranked-choice IRV via a verifiable mixnet is the next crypto milestone — [#49](https://github.com/Nimdy/voting-system-blockchain/issues/49).)*
 - **Secrecy & integrity** — exponential ElGamal, **k-of-n threshold** decryption (Pedersen DKG + Lagrange; any k of n trustees, none fewer), **cast-or-challenge** (Benaloh) auditing, a public RFC-6962 bulletin board, and a homomorphic, publicly verifiable tally.
 - **Trustlessness** — every election publishes a canonical `transcript.json` anyone re-verifies from the public record alone, checked by **two independent verifiers** (TypeScript + Python/libsodium) **cross-checked in CI on every push**.
 
