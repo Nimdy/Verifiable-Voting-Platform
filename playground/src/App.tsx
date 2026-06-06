@@ -6,6 +6,7 @@ import {
 } from './engine';
 import Walkthrough from './Walkthrough';
 import Ballot from './Ballot';
+import Ranked from './Ranked';
 
 const CANDIDATES = ['Tacos 🌮', 'Pizza 🍕', 'Sushi 🍣', 'Salad 🥗'];
 const BAR = ['bg-emerald-400', 'bg-indigo-400', 'bg-amber-400', 'bg-rose-400'];
@@ -209,7 +210,7 @@ function Playground() {
 }
 
 export default function App() {
-  const [tab, setTab] = useState<'play' | 'walk' | 'ballot'>('play');
+  const [tab, setTab] = useState<'play' | 'walk' | 'ballot' | 'ranked'>('play');
   const tabCls = (on: boolean) =>
     `rounded-lg px-3 py-1.5 text-sm font-semibold ${on ? 'bg-indigo-500 text-white' : 'text-slate-300 hover:text-white'}`;
   return (
@@ -218,8 +219,9 @@ export default function App() {
         <button onClick={() => setTab('play')} className={tabCls(tab === 'play')}>🎮 Playground</button>
         <button onClick={() => setTab('walk')} className={tabCls(tab === 'walk')}>🔬 How it works</button>
         <button onClick={() => setTab('ballot')} className={tabCls(tab === 'ballot')}>🗂️ Drill-down ballot</button>
+        <button onClick={() => setTab('ranked')} className={tabCls(tab === 'ranked')}>🏆 Ranked choice</button>
       </nav>
-      {tab === 'play' ? <Playground /> : tab === 'walk' ? <Walkthrough /> : <Ballot />}
+      {tab === 'play' ? <Playground /> : tab === 'walk' ? <Walkthrough /> : tab === 'ballot' ? <Ballot /> : <Ranked />}
     </div>
   );
 }

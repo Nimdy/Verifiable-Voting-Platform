@@ -2,12 +2,14 @@
 // No crypto is reimplemented here — we only orchestrate and format.
 import {
   setupKeys, runElection, verifyTranscript, encryptSelection, auditSelection,
-  issueCredential, sign, encrypt, proveBit, proveSumOne, addCiphertexts, randScalar, mod, N,
+  issueCredential, sign, encrypt, proveBit, proveSumOne, proveSumEqual, addCiphertexts, randScalar, mod, N,
   signingBytes, boardBytes, electionContext, BulletinBoard, Registrar,
   type Transcript, type VerifyResult, type KeySetup, type Voter, type Credential,
   type VoterCredential, type BallotEntry, type Selection, type Point,
   runStructuredElection, verifyStructured, childrenOf, allTags, isLeaf, leafContests,
   type ElectionSpec, type ElectionResult, type ContestSpec, type StructuredVoter,
+  encryptRanking, verifyRankingValid, verifyBit, verifySumEqual, runRankedElection, verifyRankedTranscript,
+  type RankedBallot, type RankedTranscript, type RankedVoter, type Ciphertext, type BitProof,
 } from '@engine';
 
 export type { Transcript, VerifyResult, KeySetup, Voter, Credential };
@@ -161,3 +163,94 @@ export function buildBallotScenario(): BallotScenario {
   const v = verifyStructured(result);
   return { spec, result, ok: v.ok, verified: new Set(v.perContest.filter((p) => p.result.ok).map((p) => p.id)) };
 }
+
+// ---- ranked-choice (Borda) — thin wrappers over the audited ranked engine ----
+// No crypto is reimplemented: every helper calls the EXACT ranked primitives from
+// reference/src/ranked.ts (encryptRanking / verifyRankingValid / runRankedElection /
+// verifyRankedTranscript) and proofs.ts (verifyBit / verifySumEqual). This is BORDA,
+// not instant-runoff — there is no mixnet (true IRV elimination is tracked as #49).
+export type { RankedBallot, RankedTranscript, RankedVoter };
+
+export const newRankedVoter = (ranking: number[]): RankedVoter => ({ credential: issueCredential(), ranking });
+
+/** Mirrors `tally()`: roll = the voters' own credentials + any spare eligible creds. */
+export const rankedTally = (
+  contest: string,
+  candidates: string[],
+  voters: RankedVoter[],
+  keys: KeySetup,
+  extraEligible: Point[],
+): RankedTranscript =>
+  runRankedElection(contest, candidates, voters, keys, [...voters.map((v) => v.credential.pub), ...extraEligible]);
+
+export const verifyRanked = (t: RankedTranscript): VerifyResult => verifyRankedTranscript(t);
+
+/** Build ONE real local ballot (the K×K ciphertext matrix + all ZK proofs) from a ranking. */
+export const buildRankedBallot = (pk: Point, ranking: number[]): RankedBallot => encryptRanking(pk, ranking).ballot;
+
+/** Truncated ciphertext hex for a single grid cell (hover tooltip: "this is real encryption"). */
+export const cellCipher = (b: RankedBallot, cand: number, rank: number): string =>
+  hexShort(toHex(b.matrix[cand]![rank]!.b.toRawBytes()), 20);
+
+export interface GridVerdict {
+  cells: boolean[][];                    // cells[candidate][rank] — real disjunctive bit-proof result
+  rows: { sum: number; ok: boolean }[];  // each candidate gets exactly one rank
+  cols: { sum: number; ok: boolean }[];  // each rank goes to exactly one candidate
+  overall: boolean;
+}
+
+/**
+ * Drive the live grid badges by running the REAL primitives per cell / row / column.
+ * The pass/fail booleans are 100% the actual verifier (verifyBit / verifySumEqual /
+ * verifyRankingValid). Only the displayed Σ number is cosmetic — it defaults to 1, or
+ * uses the caller-supplied true sums for the forged-ballot demo.
+ */
+export const verifyGrid = (
+  pk: Point,
+  b: RankedBallot,
+  trueSums?: { rows: number[]; cols: number[] },
+): GridVerdict => {
+  const K = b.matrix.length;
+  const cells = b.matrix.map((row, i) => row.map((ct, r) => verifyBit(pk, ct, b.bitProofs[i]![r]!)));
+  const rows = b.matrix.map((row, i) => ({
+    sum: trueSums?.rows[i] ?? 1,
+    ok: verifySumEqual(pk, addCiphertexts(row), b.rowSums[i]!, 1),
+  }));
+  const cols = Array.from({ length: K }, (_, r) => ({
+    sum: trueSums?.cols[r] ?? 1,
+    ok: verifySumEqual(pk, addCiphertexts(b.matrix.map((row) => row[r]!)), b.colSums[r]!, 1),
+  }));
+  return { cells, rows, cols, overall: verifyRankingValid(pk, b) };
+};
+
+/**
+ * SOUNDNESS demo — forge a GENUINELY invalid (non-permutation) ranked ballot, bypassing
+ * encryptRanking's permutation guard, built from the SAME primitives as overvoteSelection.
+ * Candidates 0 AND 1 both get rank 0, so column 0 truly sums to 2 and column 1 to 0. Every
+ * cell is still a real 0/1 bit and every row still sums to 1, but the real verifySumEqual(…,1)
+ * rejects columns 0 and 1 honestly — nothing is hardcoded.
+ */
+export const forgeInvalidBallot = (
+  pk: Point,
+  K: number,
+): { ballot: RankedBallot; trueSums: { rows: number[]; cols: number[] } } => {
+  const rank = [0, 0, 2, 3].slice(0, K); // candidate i → rank[i]; deliberately NOT a permutation
+  const matrix: Ciphertext[][] = [];
+  const bitProofs: BitProof[][] = [];
+  const rnd: bigint[][] = [];
+  for (let i = 0; i < K; i++) {
+    matrix[i] = []; bitProofs[i] = []; rnd[i] = [];
+    for (let r = 0; r < K; r++) {
+      const v: 0 | 1 = rank[i] === r ? 1 : 0;
+      const rr = randScalar();
+      const ct = encrypt(pk, BigInt(v), rr);
+      matrix[i]!.push(ct); bitProofs[i]!.push(proveBit(pk, ct, v, rr)); rnd[i]!.push(rr);
+    }
+  }
+  const rowSums = matrix.map((row, i) => proveSumEqual(pk, addCiphertexts(row), rnd[i]!.reduce((a, b) => mod(a + b, N), 0n), 1));
+  const colSums = Array.from({ length: K }, (_, r) =>
+    proveSumEqual(pk, addCiphertexts(matrix.map((row) => row[r]!)), rnd.reduce((a, row) => mod(a + row[r]!, N), 0n), 1));
+  const trueRows = Array.from({ length: K }, () => 1); // each candidate still has exactly one rank
+  const trueCols = Array.from({ length: K }, (_, r) => rank.filter((x) => x === r).length); // [2,0,1,1]
+  return { ballot: { matrix, bitProofs, rowSums, colSums }, trueSums: { rows: trueRows, cols: trueCols } };
+};

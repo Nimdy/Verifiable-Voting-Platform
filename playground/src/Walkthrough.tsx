@@ -150,7 +150,7 @@ export default function Walkthrough() {
   const p = phases[i]!;
   const runCheat = (kind: 'double' | 'ineligible' | 'overvote' | 'tamper' | 'rig') => {
     const f = {
-      double: (x = t) => doubleVote(x, sc.voters), ineligible, overvote: (x = t) => overvote(x, sc.spare),
+      double: (x = t) => doubleVote(x, sc.voters), ineligible: ineligibleVote, overvote: (x = t) => overvote(x, sc.spare),
       tamper: tamperBallot, rig: rigResult,
     }[kind];
     setCheat({ kind, result: verify(f(t)) });

@@ -22,7 +22,7 @@ jobs:
       - run: npm run selftest
 
   playground:
-    name: Playground — build
+    name: Playground — typecheck & build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +32,8 @@ jobs:
       - run: npm install
         working-directory: reference
       - run: npm install
+        working-directory: playground
+      - run: npm run typecheck
         working-directory: playground
       - run: npm run build
         working-directory: playground

@@ -142,7 +142,8 @@ export function rankedSigningBytes(ctx: Uint8Array, b: RankedBallot): Uint8Array
   return concatBytes(...parts);
 }
 
-function rankedBoardBytes(ctx: Uint8Array, credPub: Point, b: RankedBallot, sig: Signature): Uint8Array {
+/** Canonical bulletin-board bytes for a ranked ballot (credential ‖ signed ballot ‖ signature). */
+export function rankedBoardBytes(ctx: Uint8Array, credPub: Point, b: RankedBallot, sig: Signature): Uint8Array {
   return concatBytes(credPub.toRawBytes(), rankedSigningBytes(ctx, b), sig.R.toRawBytes(), scalarTo32(sig.s));
 }
 
