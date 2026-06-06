@@ -88,6 +88,7 @@ These are tracked on the [roadmap](../docs/ROADMAP.md) (M1/M3), not oversights:
 | `src/session.ts` | cast-or-challenge (Benaloh) voting session |
 | `src/structured.ts` | hierarchical, tagged multi-contest elections + bundle verification |
 | `src/ranked.ts` | ranked-choice ballots: permutation-matrix validity + homomorphic Borda |
+| `src/mixnet.ts` | verifiable re-encryption shuffle (Sako–Kilian cut-and-choose) — the primitive for true IRV |
 | `src/verify.ts` | the independent verifier (always returns a verdict) |
 | `src/transcript-json.ts` | canonical JSON (de)serialization of a transcript (plurality **and** ranked) |
 | `src/verify-cli.ts` | standalone CLI: re-verify a plurality or ranked transcript from the public record alone |

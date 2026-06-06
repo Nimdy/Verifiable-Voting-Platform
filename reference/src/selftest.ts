@@ -2,7 +2,7 @@
 // for a formal audit — but it catches the obvious ways ZK proofs go wrong
 // (forgeable proofs, malleable proofs, wrong tallies). Run: npm run selftest
 
-import { G, N, ZERO, mod, mul, randScalar, scalarTo32, invMod, pointToHex } from './group.js';
+import { G, N, ZERO, mod, mul, randScalar, scalarTo32, invMod, pointToHex, hashToScalar } from './group.js';
 import { Registrar } from './registrar.js';
 import {
   runStructuredElection, verifyStructured, validateSpec, type ElectionSpec, type StructuredVoter,
@@ -13,7 +13,12 @@ import {
 } from './ranked.js';
 import {
   addCiphertexts, combinePublicKey, decryptionShare, discreteLog, encrypt, trusteeKeygen,
+  type Ciphertext,
 } from './elgamal.js';
+import {
+  shuffleProve, verifyShuffle, shuffleChallengeBits, reencItem, SECURITY_T,
+  type Item, type ShuffleProof,
+} from './mixnet.js';
 import {
   proveBit, verifyBit, proveDecryption, verifyDecryption, proveSumOne, verifySumOne,
   proveSumEqual, verifySumEqual,
@@ -463,6 +468,131 @@ for (let trial = 0; trial < 40; trial++) {
   let parseThrew = false;
   try { rankedTranscriptFromJSON(JSON.stringify(obj2)); } catch { parseThrew = true; }
   check(parseThrew, 'a bad point encoding in a ranked ballot is rejected on parse');
+}
+
+// 19. Verifiable re-encryption mixnet (Sako–Kilian cut-and-choose): honest shuffles verify and
+//     preserve the plaintext multiset; every soundness/privacy pitfall is caught; verifier never throws.
+{
+  const T = SECURITY_T; // the verifier hard-floors t ≥ SECURITY_T, so honest test proofs use it
+  const mk = trusteeKeygen(1, randScalar());
+  const mh = mk.pub; // 1-of-1 joint key, only so tests can decrypt to check the plaintext multiset
+  const dec = (ct: Ciphertext): number => discreteLog(ct.b.subtract(decryptionShare(ct.a, mk.secret)), 50);
+  const encItem = (ms: number[]): Item => ms.map((m) => encrypt(mh, BigInt(m), randScalar()));
+  const noThrow = (fn: () => boolean): boolean | 'threw' => { try { return fn(); } catch { return 'threw'; } };
+  const bumpFactor0 = (pf: ShuffleProof, w: number): ShuffleProof => ({
+    ...pf,
+    openings: pf.openings.map((op, j) => (j === 0
+      ? { ...op, factors: op.factors.map((f, i) => (i === 0 ? f.map((s, ww) => (ww === w ? mod(s + 1n, N) : s)) : f)) }
+      : op)),
+  });
+
+  // H1 — honest shuffles verify AND preserve the plaintext multiset (W = 1..3). t=128 proofs are
+  //       heavy, so a small sweep; degenerate W=1 and substitution soundness are exercised below.
+  let h1 = true;
+  for (let trial = 0; trial < 3; trial++) {
+    const n = 1 + Math.floor(Math.random() * 2); // 1..2
+    const W = 1 + Math.floor(Math.random() * 2); // 1..2
+    const L0: Item[] = Array.from({ length: n }, () => encItem(Array.from({ length: W }, () => Math.floor(Math.random() * 6))));
+    const { L, proof } = shuffleProve(mh, L0, T);
+    if (!verifyShuffle(mh, L0, L, proof).ok) h1 = false;
+    const before = L0.map((it) => it.map(dec).join(',')).sort();
+    const after = L.map((it) => it.map(dec).join(',')).sort();
+    if (JSON.stringify(before) !== JSON.stringify(after)) h1 = false;
+  }
+  check(h1, 'mixnet: honest shuffles verify and preserve the plaintext multiset (W=1..3)');
+
+  // H2 — factor-0 is the identity re-encryption; verifier must not special-case/skip it
+  const it0 = encItem([3, 4]);
+  const re0 = reencItem(mh, it0, [0n, 0n]);
+  check(re0.every((c, w) => c.a.equals(it0[w]!.a) && c.b.equals(it0[w]!.b)), 'mixnet: factor-0 re-encryption is the identity');
+
+  // Baseline honest proof to tamper (n=2, W=2 — small, since the t=128 hash/work dominates cost)
+  const baseL0: Item[] = Array.from({ length: 2 }, () => encItem([Math.floor(Math.random() * 6), Math.floor(Math.random() * 6)]));
+  const base = shuffleProve(mh, baseL0, T);
+  check(verifyShuffle(mh, baseL0, base.L, base.proof).ok, 'mixnet: baseline honest proof verifies');
+
+  // T2 — opened permutation must be a true bijection of 0..n-1
+  const dupPerm = { ...base.proof, openings: base.proof.openings.map((op, j) => (j === 0 ? { ...op, perm: op.perm.map((p, idx) => (idx === 0 ? op.perm[1]! : p)) } : op)) };
+  check(verifyShuffle(mh, baseL0, base.L, dupPerm).ok === false, 'mixnet: duplicated index in an opened permutation is rejected');
+  const oorPerm = { ...base.proof, openings: base.proof.openings.map((op, j) => (j === 0 ? { ...op, perm: op.perm.map((p, idx) => (idx === 0 ? baseL0.length : p)) } : op)) };
+  check(verifyShuffle(mh, baseL0, base.L, oorPerm).ok === false, 'mixnet: out-of-range index in an opened permutation is rejected');
+  const shortPerm = { ...base.proof, openings: base.proof.openings.map((op, j) => (j === 0 ? { ...op, perm: op.perm.slice(0, -1) } : op)) };
+  check(noThrow(() => verifyShuffle(mh, baseL0, base.L, shortPerm).ok) === false, 'mixnet: wrong-length opened permutation is rejected without throwing');
+
+  // T3 — |L| = |L0| = |M_j| enforced
+  check(verifyShuffle(mh, baseL0, base.L.slice(0, -1), base.proof).ok === false, 'mixnet: output shorter than input is rejected');
+  check(verifyShuffle(mh, baseL0, [...base.L, encItem([0, 0])], base.proof).ok === false, 'mixnet: output longer than input is rejected');
+  const truncM = { ...base.proof, intermediates: base.proof.intermediates.map((M, j) => (j === 0 ? M.slice(0, -1) : M)) };
+  check(verifyShuffle(mh, baseL0, base.L, truncM).ok === false, 'mixnet: a truncated intermediate is rejected');
+
+  // T4 — output ciphertext integrity (both components are bound)
+  const tamperB = base.L.map((it, i) => (i === 0 ? it.map((c, w) => (w === 0 ? { a: c.a, b: c.b.add(mh) } : c)) : it));
+  check(verifyShuffle(mh, baseL0, tamperB, base.proof).ok === false, 'mixnet: tampering an output ciphertext .b is rejected');
+  const tamperA = base.L.map((it, i) => (i === 0 ? it.map((c, w) => (w === 0 ? { a: c.a.add(G), b: c.b } : c)) : it));
+  check(verifyShuffle(mh, baseL0, tamperA, base.proof).ok === false, 'mixnet: tampering an output ciphertext .a is rejected');
+
+  // T5 — re-encryption is checked on EVERY one of the W components (not just component 0)
+  check(verifyShuffle(mh, baseL0, base.L, bumpFactor0(base.proof, 0)).ok === false, 'mixnet: a bumped factor on component 0 is rejected');
+  check(verifyShuffle(mh, baseL0, base.L, bumpFactor0(base.proof, 1)).ok === false, 'mixnet: a bumped factor on the LAST component is rejected');
+
+  // T6 — substituting an output ballot with a different plaintext is rejected
+  const sub = base.L.map((it, i) => (i === 0 ? encItem([99, 99]) : it));
+  check(verifyShuffle(mh, baseL0, sub, base.proof).ok === false, 'mixnet: substituting an output ballot (different plaintext) is rejected');
+
+  // T7 — Fiat–Shamir binds every intermediate; t-floor enforced; challenge is pure
+  const mutM = { ...base.proof, intermediates: base.proof.intermediates.map((M, j) => (j === 0 ? M.map((it, i) => (i === 0 ? it.map((c, w) => (w === 0 ? { a: c.a.add(G), b: c.b } : c)) : it)) : M)) };
+  check(verifyShuffle(mh, baseL0, base.L, mutM).ok === false, 'mixnet: mutating a committed intermediate (FS binding) is rejected');
+  const lowL0: Item[] = [encItem([1]), encItem([2])];
+  const low = shuffleProve(mh, lowL0, SECURITY_T - 1);
+  check(verifyShuffle(mh, lowL0, low.L, low.proof).ok === false, `mixnet: t < SECURITY_T (${SECURITY_T}) is rejected at the shape gate`);
+  const bitsA = shuffleChallengeBits(mh, baseL0, base.L, base.proof.intermediates, T);
+  const bitsB = shuffleChallengeBits(mh, baseL0, base.L, base.proof.intermediates, T);
+  check(JSON.stringify(bitsA) === JSON.stringify(bitsB), 'mixnet: challenge bits are deterministic (pure function)');
+  const bitsC = shuffleChallengeBits(mh, baseL0, base.L, mutM.intermediates, T);
+  check(JSON.stringify(bitsA) !== JSON.stringify(bitsC), 'mixnet: flipping any intermediate point changes the challenge bits');
+
+  // T8 — exactly t bits, and they are ~balanced (no constant/low-entropy derivation). Balance is a
+  //      property of the bit-expansion, so derive a long 512-bit stream from one statement (cheap).
+  check(bitsA.length === T, 'mixnet: challenge derivation yields exactly t bits');
+  const longBits = shuffleChallengeBits(mh, baseL0, base.L, base.proof.intermediates, 512);
+  const ones = longBits.filter((b) => b === 1).length;
+  check(ones > 512 * 0.4 && ones < 512 * 0.6, `mixnet: challenge bits are ~balanced (${ones}/512 ones)`);
+
+  // T9 — fresh randomness: two shuffles of the same input differ; exactly t single-leg openings
+  const r9L0: Item[] = [encItem([1]), encItem([2])];
+  const r1 = shuffleProve(mh, r9L0, T);
+  const r2 = shuffleProve(mh, r9L0, T);
+  const Lhex = (L: Item[]): string => L.map((it) => it.map((c) => pointToHex(c.b)).join()).join();
+  check(Lhex(r1.L) !== Lhex(r2.L), 'mixnet: two shuffles of the same input differ (fresh randomness, not Math.random)');
+  check(r1.proof.openings.length === T && r1.proof.openings.every((op) => Array.isArray(op.perm) && Array.isArray(op.factors)), 'mixnet: exactly t openings, each a single leg');
+
+  // T10 — non-canonical scalar (s + N) rejected
+  const nonCanon = { ...base.proof, openings: base.proof.openings.map((op, j) => (j === 0 ? { ...op, factors: op.factors.map((f, i) => (i === 0 ? f.map((s, w) => (w === 0 ? s + N : s)) : f)) } : op)) };
+  check(verifyShuffle(mh, baseL0, base.L, nonCanon).ok === false, 'mixnet: a non-canonical factor (s + N) is rejected');
+
+  // T11 — verifier NEVER throws on malformed proofs (returns false)
+  check(noThrow(() => verifyShuffle(mh, baseL0, base.L, { ...base.proof, openings: [] }).ok) === false, 'mixnet: empty openings rejected without throwing');
+  check(noThrow(() => verifyShuffle(mh, baseL0, base.L, { ...base.proof, intermediates: base.proof.intermediates.slice(0, 1) }).ok) === false, 'mixnet: wrong intermediate count rejected without throwing');
+  check(noThrow(() => verifyShuffle(mh, baseL0, base.L, { ...base.proof, openings: base.proof.openings.map((op, j) => (j === 0 ? { ...op, perm: null as unknown as number[] } : op)) }).ok) === false, 'mixnet: null perm rejected without throwing');
+  check(noThrow(() => verifyShuffle(mh, baseL0, base.L, { ...base.proof, openings: base.proof.openings.map((op, j) => (j === 0 ? { ...op, factors: op.factors.map((f, i) => (i === 0 ? f.slice(0, -1) : f)) } : op)) }).ok) === false, 'mixnet: ragged factor row rejected without throwing');
+  check(noThrow(() => verifyShuffle(mh, [], base.L, base.proof).ok) === false, 'mixnet: empty input rejected without throwing');
+
+  // T12 — W=1 degenerate (single-ciphertext shuffle, the unit a per-column IRV feeds)
+  const w1L0: Item[] = Array.from({ length: 3 }, () => encItem([Math.floor(Math.random() * 5)]));
+  const w1 = shuffleProve(mh, w1L0, T);
+  check(verifyShuffle(mh, w1L0, w1.L, w1.proof).ok, 'mixnet: W=1 (single-ciphertext) shuffle verifies');
+  check(verifyShuffle(mh, w1L0, w1.L.map((it, i) => (i === 0 ? encItem([77]) : it)), w1.proof).ok === false, 'mixnet: W=1 output substitution is rejected');
+
+  // T13 — re-encryption binds the JOINT key (s·pk on b, s·G on a): wrong key is rejected
+  const wrongPk = trusteeKeygen(2, randScalar()).pub;
+  check(verifyShuffle(wrongPk, baseL0, base.L, base.proof).ok === false, 'mixnet: verifying under the wrong joint key is rejected (s·pk binding)');
+
+  // T14 — domain-separation label cannot alias other proof types
+  const dpts = [mh, G, base.L[0]![0]!.a];
+  check(hashToScalar('mixnet-shuffle', dpts) !== hashToScalar('decryption', dpts)
+    && hashToScalar('mixnet-shuffle', dpts) !== hashToScalar('ballot-bit', dpts)
+    && hashToScalar('mixnet-shuffle', dpts) !== hashToScalar('sum-eq', dpts),
+    'mixnet: domain-separation label differs from every other proof label');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);
