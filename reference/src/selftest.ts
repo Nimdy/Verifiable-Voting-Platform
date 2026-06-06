@@ -33,6 +33,7 @@ import {
 } from './election.js';
 import { dkg, combineShares, verificationKeyAt } from './threshold.js';
 import { newSession, prepareBallot, challengeBallot, castBallot } from './session.js';
+import { BulletinBoard } from './bulletin.js';
 import {
   transcriptToJSON, transcriptFromJSON, rankedTranscriptToJSON, rankedTranscriptFromJSON,
   mixnetIrvTranscriptToJSON, mixnetIrvTranscriptFromJSON,
@@ -712,6 +713,25 @@ for (let trial = 0; trial < 40; trial++) {
   oj2.shuffled[0][0].a = 'zz'.repeat(32); // invalid point encoding
   let parseThrewIrv = false; try { mixnetIrvTranscriptFromJSON(JSON.stringify(oj2)); } catch { parseThrewIrv = true; }
   check(parseThrewIrv, 'mixnet-IRV: a bad point encoding in the shuffle is rejected on parse');
+}
+
+// 21. Bulletin-board Merkle is NOT malleable (CVE-2012-2459 regression lock): the RFC-6962-strict
+//     construction (split at the largest power of two < n, never duplicate a lone node) means n and
+//     n+1-with-a-duplicated-tail entries can never share a root. This is the property the on-chain
+//     root anchor depends on; it was the round-1 finding and this test keeps it from regressing.
+{
+  const board = (items: Uint8Array[]): string => { const b = new BulletinBoard(); items.forEach((x) => b.append(x)); return b.root(); };
+  const A = new Uint8Array([1]); const B = new Uint8Array([2]); const C = new Uint8Array([3]); const D = new Uint8Array([4]);
+  // The exact CVE-2012-2459 collision the original construction had: [A,B,C] vs [A,B,C,C].
+  check(board([A, B, C]) !== board([A, B, C, C]), 'Merkle: [A,B,C] and [A,B,C,C] have DIFFERENT roots (CVE-2012-2459 fixed)');
+  check(board([A, B]) !== board([A, B, B]), 'Merkle: [A,B] and [A,B,B] have different roots (no odd-node duplication)');
+  // The root commits to the exact ordered multiset: size, order, and content all matter.
+  check(board([A, B, C]) !== board([A, B]) && board([A, B, C]) !== board([A, B, C, D]), 'Merkle: root commits to the ballot count');
+  check(board([A, B, C]) !== board([A, C, B]), 'Merkle: root commits to ballot order');
+  check(board([A, B, C]) !== board([A, B, D]), 'Merkle: flipping any one leaf changes the root');
+  check(board([A]) !== board([]) && board([A, B]) !== board([B, A]), 'Merkle: distinct boards yield distinct roots');
+  // Deterministic: same ordered set → same root (so an independent verifier reproduces it).
+  check(board([A, B, C]) === board([A, B, C]), 'Merkle: root is a deterministic function of the ordered ballots');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);
