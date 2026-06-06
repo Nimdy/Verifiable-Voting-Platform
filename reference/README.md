@@ -41,9 +41,9 @@ npm run typecheck
 - **Hierarchical, tagged ballots** — an election is a tree of contests (parent groups →
   drill-down leaf contests) with tags; each leaf is an independently verifiable sub-election,
   and `verifyStructured` authenticates the whole bundle against the spec (no omit/duplicate/relabel).
-- **Ranked-choice (validity)** — a strict ranking is a K×K **permutation matrix** of encrypted bits
-  (every row and column sums to 1), verified by reusing the bit + exactly-L proofs; the homomorphic
-  **Borda** tally needs no mixnet. *(Full ranked elections + IRV-via-mixnet: #49.)*
+- **Ranked-choice (Borda)** — full ranked elections: each ballot is a K×K **permutation matrix** of
+  encrypted bits (every row & column sums to 1), and the **Borda** tally is homomorphic + k-of-n
+  threshold-decrypted — no mixnet. *(True IRV elimination via a verifiable mixnet: #49.)*
 - **Public bulletin board** — an append-only RFC-6962 Merkle log, context-bound to the
   election so ballots can't be replayed elsewhere; altering any ballot changes the root.
 - **Independent verifier** — rechecks the entire public transcript from scratch, and

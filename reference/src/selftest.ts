@@ -7,7 +7,10 @@ import { Registrar } from './registrar.js';
 import {
   runStructuredElection, verifyStructured, validateSpec, type ElectionSpec, type StructuredVoter,
 } from './structured.js';
-import { encryptRanking, verifyRankingValid, bordaBallotTotals } from './ranked.js';
+import {
+  encryptRanking, verifyRankingValid, bordaBallotTotals,
+  runRankedElection, verifyRankedTranscript, type RankedVoter,
+} from './ranked.js';
 import {
   addCiphertexts, combinePublicKey, decryptionShare, discreteLog, encrypt, trusteeKeygen,
 } from './elgamal.js';
@@ -406,6 +409,28 @@ for (let trial = 0; trial < 40; trial++) {
   const rs = mtx.map((row, i) => proveSumEqual(pk, addCiphertexts(row), rnd[i]!.reduce((a, b) => mod(a + b, N), 0n), 1));
   const cs = Array.from({ length: K }, (_, r) => proveSumEqual(pk, addCiphertexts(mtx.map((row) => row[r]!)), rnd.reduce((a, row) => mod(a + row[r]!, N), 0n), 1));
   check(!verifyRankingValid(pk, { matrix: mtx, bitProofs: bps, rowSums: rs, colSums: cs }), 'duplicate-rank ballot (a column sums to 2) is rejected');
+}
+
+// 17. Full ranked (Borda) election: verifies; tally correct; insider attacks caught.
+{
+  const keys = setupKeys(3, 2);
+  const r = new Registrar();
+  const packets = r.register([{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
+  const roll = r.publishedRoll();
+  const cands = ['w', 'x', 'y', 'z'];
+  const voters: RankedVoter[] = packets.map((pk, i) => ({ credential: pk.credential, ranking: [0, 1, 2, 3].map((x) => (x + i) % 4) }));
+  const t = runRankedElection('rank', cands, voters, keys, roll);
+  check(verifyRankedTranscript(t).ok, 'ranked election verifies');
+  check(t.results.reduce((a, b) => a + b, 0) === voters.length * ((4 * 3) / 2), 'Borda totals sum to V·K(K-1)/2');
+  const expected = cands.map((_, c) => voters.reduce((acc, _v, i) => acc + (3 - ((c + i) % 4)), 0));
+  check(JSON.stringify(t.results) === JSON.stringify(expected), 'ranked Borda totals are correct');
+  const sneaky: RankedVoter[] = [...voters, { credential: issueCredential(), ranking: [0, 1, 2, 3] }];
+  check(verifyRankedTranscript(runRankedElection('rank', cands, sneaky, keys, roll)).ok === false, 'ranked: a voter not on the roll is rejected');
+  check(verifyRankedTranscript({ ...t, results: t.results.map((n, i) => (i === 0 ? n + 1 : n)) }).ok === false, 'ranked: a tampered Borda total is rejected');
+  const dbl: RankedVoter[] = [...voters, { credential: packets[0]!.credential, ranking: [3, 2, 1, 0] }];
+  check(verifyRankedTranscript(runRankedElection('rank', cands, dbl, keys, roll)).ok === false, 'ranked: a double vote is rejected');
+  const wrongDim = { ...t, ballots: t.ballots.map((b, i) => (i === 0 ? { ...b, ballot: { ...b.ballot, colSums: [...b.ballot.colSums, b.ballot.colSums[0]!] } } : b)) };
+  check(verifyRankedTranscript(wrongDim).ok === false, 'ranked: a wrong-dimension ballot is rejected at the shape gate');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);

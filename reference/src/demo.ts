@@ -21,7 +21,7 @@ import {
   runStructuredElection, verifyStructured, childrenOf, allTags, isLeaf,
   type ElectionSpec, type StructuredVoter,
 } from './structured.js';
-import { encryptRanking, verifyRankingValid } from './ranked.js';
+import { runRankedElection, verifyRankedTranscript, type RankedVoter } from './ranked.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { verifyTranscript, type VerifyResult } from './verify.js';
 
@@ -178,16 +178,15 @@ const seatVoters: Voter[] = packets.slice(0, 5).map((pk, i) => ({ credential: pk
 const seatT = runElection('Board seats (pick 2)', seatCands, seatVoters, keys, eligibleRoll, undefined, 2);
 console.log('   results: ' + seatCands.map((c, j) => `${c} ${seatT.results[j]}`).join('   ') + `   ·   verify: ${verifyTranscript(seatT).ok ? '✅' : '❌'}  (Σ = 2×${seatT.numVoters})\n`);
 
-console.log('RANKED-CHOICE — a strict ranking as a verifiable permutation matrix:');
+console.log('RANKED-CHOICE (Borda) — a full ranked election, end to end:');
 line();
 const rkCands = ['Ada', 'Grace', 'Alan', 'Linus'];
-const ranking = [2, 0, 3, 1]; // candidate i → rank
-const { ballot: rkBallot } = encryptRanking(keys.publicKey, ranking);
-console.log('   Ranking: ' + rkCands.map((c, i) => `${c} #${ranking[i]! + 1}`).join('   '));
-console.log(`   Valid permutation-matrix ballot?  ${verifyRankingValid(keys.publicKey, rkBallot) ? '✅ YES' : '❌ NO'}`);
-const dupRk = { ...rkBallot, matrix: rkBallot.matrix.map((row, i) => row.map((c, r) => (i === 0 && r === 0 ? { a: c.a, b: c.b.add(keys.publicKey) } : c))) };
-console.log(`   A tampered ballot?  ${verifyRankingValid(keys.publicKey, dupRk) ? '🔴 accepted' : '✅ rejected'}  (duplicate-rank rejection is covered in the self-test)`);
-console.log('   (Borda tally + full ranked elections + the Python cross-verifier are the next increments — #49.)\n');
+const rkVoters: RankedVoter[] = packets.slice(0, 5).map((pk, i) => ({ credential: pk.credential, ranking: [0, 1, 2, 3].map((x) => (x + i) % 4) }));
+const rkT = runRankedElection('Board chair (ranked)', rkCands, rkVoters, keys, eligibleRoll, [1, 3, 5]);
+const rkV = verifyRankedTranscript(rkT);
+console.log('   Borda totals: ' + rkCands.map((c, i) => `${c} ${rkT.results[i]}`).join('   '));
+console.log(`   ${rkV.ok ? '🟢 VERIFIED' : '🔴 REJECTED'} — each ballot a valid permutation matrix; Borda tally threshold-decrypted by 3 of 5 trustees.`);
+console.log('   (True IRV elimination still needs a verifiable mixnet — #49.)\n');
 
 // Publish the transcript so anyone can re-verify it from the public record alone.
 mkdirSync('out', { recursive: true });
