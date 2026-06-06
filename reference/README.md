@@ -90,6 +90,7 @@ These are tracked on the [roadmap](../docs/ROADMAP.md) (M1/M3), not oversights:
 | `src/ranked.ts` | ranked-choice ballots: permutation-matrix validity + homomorphic Borda |
 | `src/mixnet.ts` | verifiable re-encryption shuffle (Sako–Kilian cut-and-choose) — the primitive for true IRV |
 | `src/mixnet-irv.ts` | end-to-end verifiable **instant-runoff** (IRV): shuffle → threshold-decrypt → public tabulation |
+| `src/rla.ts` | paper + RLA hybrid: signed digital↔paper anchor, ballot manifest, Arlo/SHANGRLA export ([ADR-0009](../docs/ADRs/ADR-0009-the-digital-paper-anchor-binds-the-board-root-to-the-paper-bal.md)) |
 | `src/verify.ts` | the independent verifier (always returns a verdict) |
 | `src/transcript-json.ts` | canonical JSON (de)serialization of a transcript (plurality **and** ranked) |
 | `src/verify-cli.ts` | standalone CLI: re-verify a plurality or ranked transcript from the public record alone |

@@ -35,6 +35,10 @@ import { dkg, combineShares, verificationKeyAt } from './threshold.js';
 import { newSession, prepareBallot, challengeBallot, castBallot } from './session.js';
 import { BulletinBoard } from './bulletin.js';
 import {
+  makeManifest, buildAnchor, verifyAnchor, reportedResults, pollingExport,
+  pollingExportToJSON, pollingExportFromJSON, toArloManifestCsv, bravoSampleSize, type BatchRow,
+} from './rla.js';
+import {
   transcriptToJSON, transcriptFromJSON, rankedTranscriptToJSON, rankedTranscriptFromJSON,
   mixnetIrvTranscriptToJSON, mixnetIrvTranscriptFromJSON,
 } from './transcript-json.js';
@@ -732,6 +736,59 @@ for (let trial = 0; trial < 40; trial++) {
   check(board([A]) !== board([]) && board([A, B]) !== board([B, A]), 'Merkle: distinct boards yield distinct roots');
   // Deterministic: same ordered set → same root (so an independent verifier reproduces it).
   check(board([A, B, C]) === board([A, B, C]), 'Merkle: root is a deterministic function of the ordered ballots');
+}
+
+// 22. Paper + RLA hybrid (ADR-0004): the digital↔paper anchor binds the board root to the paper
+//     batches and is signed by the authority; tampering either side is caught; the secret-ballot
+//     export carries ONLY totals (never a per-ballot CVR); the verifier never throws.
+{
+  const noThrow = (fn: () => boolean): boolean | 'threw' => { try { return fn(); } catch { return 'threw'; } };
+  const keys = setupKeys(3, 2);
+  const r = new Registrar();
+  const packets = r.register(Array.from({ length: 7 }, (_, i) => ({ id: `v${i}` })));
+  const roll = r.publishedRoll();
+  const cands = ['Ana', 'Ben', 'Cy'];
+  const choices = [0, 0, 0, 1, 1, 2, 0]; // Ana 4, Ben 2, Cy 1 over 7 voters
+  const voters: Voter[] = packets.map((p, i) => ({ credential: p.credential, choice: choices[i]! }));
+  const t = runElection('Chair', cands, voters, keys, roll, [1, 2]);
+  const signer = issueCredential(); // the election-authority / ceremony key
+
+  const batches: BatchRow[] = [{ batchId: 'batch-A', ballotCount: 4 }, { batchId: 'batch-B', ballotCount: 3 }];
+  const manifest = makeManifest('Chair', batches);
+  const anchor = buildAnchor({ contest: 'Chair', boardRoot: t.boardRoot, numVoters: t.numVoters, publicKey: t.publicKey, manifest, signer, anchoredAt: '2026-06-06T00:00:00Z' });
+  const exp = { boardRoot: t.boardRoot, numVoters: t.numVoters, publicKey: anchor.publicKey, signerPub: anchor.signerPub };
+
+  check(verifyAnchor(anchor, manifest, exp).ok, 'RLA anchor: honest anchor verifies (signed, pinned authority, both roots, reconciled)');
+  // CRITICAL regression (review finding 1): a byte-boundary shift between the two adjacent roots, reusing
+  // the honest signature, must be rejected on the BARE path by the canonical 32-byte encoding gate.
+  check(verifyAnchor({ ...anchor, boardRoot: anchor.boardRoot.slice(0, -2), paperManifestRoot: anchor.boardRoot.slice(-2) + anchor.paperManifestRoot }).ok === false, 'RLA anchor: a root byte-boundary-shift forge (reused sig) is rejected on the bare path');
+  // Signer pinning (review finding 2): an anchor self-signed by a non-authority key is rejected when the
+  // authority is pinned; pinning a different key rejects even the honest anchor.
+  const rogue = buildAnchor({ contest: 'Chair', boardRoot: t.boardRoot, numVoters: t.numVoters, publicKey: t.publicKey, manifest, signer: issueCredential(), anchoredAt: '2026-06-06T00:00:00Z' });
+  check(verifyAnchor(rogue, manifest, exp).ok === false, 'RLA anchor: an anchor self-signed by a non-authority key is rejected when the authority is pinned');
+  check(verifyAnchor(anchor, manifest, { ...exp, signerPub: pointToHex(issueCredential().pub) }).ok === false, 'RLA anchor: pinning a different authority key rejects the honest anchor');
+  check(verifyAnchor({ ...anchor, boardRoot: 'ab'.repeat(32) }, manifest, exp).ok === false, 'RLA anchor: a tampered digital board root is rejected');
+  check(verifyAnchor({ ...anchor, paperManifestRoot: 'cd'.repeat(32) }, manifest, exp).ok === false, 'RLA anchor: a tampered paper-manifest root is rejected');
+  check(verifyAnchor({ ...anchor, sig: { R: anchor.sig.R, s: (BigInt(anchor.sig.s) + 1n).toString() } }, manifest, exp).ok === false, 'RLA anchor: a forged authority signature is rejected');
+  check(verifyAnchor(anchor, makeManifest('Chair', [{ batchId: 'batch-A', ballotCount: 5 }, { batchId: 'batch-B', ballotCount: 3 }]), exp).ok === false, 'RLA anchor: a tampered paper batch count is rejected');
+  check(verifyAnchor(anchor, manifest, { ...exp, boardRoot: 'ef'.repeat(32) }).ok === false, 'RLA anchor: an anchor bound to a different transcript is rejected');
+  const badRecon = buildAnchor({ contest: 'Chair', boardRoot: t.boardRoot, numVoters: t.numVoters, publicKey: t.publicKey, manifest: makeManifest('Chair', [{ batchId: 'b', ballotCount: 99 }]), signer, anchoredAt: 'x' });
+  check(verifyAnchor(badRecon).ok === false, 'RLA anchor: a paper/digital count discrepancy is flagged (paper wins)');
+
+  // HARD RULE — secret-ballot export carries totals only, NEVER a per-ballot CVR.
+  const reported = reportedResults('Chair', cands, 'plurality', t.results, t.numVoters, 0);
+  const e = pollingExport(anchor, manifest, reported);
+  const j = pollingExportToJSON(e);
+  check(!/"choice"|"selection"|cvr|plaintext|"ranking"|enc"|credentialPub/i.test(j), 'RLA export: secret-ballot export contains no per-ballot CVR / voter-linked field');
+  check(e.reported.reportedTally.length === cands.length && e.reported.auditMethod === 'ballot-polling', 'RLA export: reported tally is an aggregate, audit method forced to ballot-polling');
+  check(verifyAnchor(pollingExportFromJSON(j).anchor, pollingExportFromJSON(j).manifest, exp).ok, 'RLA export: round-trips through JSON and re-verifies');
+
+  // Arlo manifest CSV + illustrative BRAVO.
+  check(toArloManifestCsv(manifest).split('\n')[0] === 'Container,Tabulator,Batch Name,Number of Ballots', 'RLA export: Arlo ballot-manifest CSV header is correct');
+  check(Number.isFinite(bravoSampleSize(t.results, 0.05).sampleSize) && bravoSampleSize([5, 5], 0.05).sampleSize === Infinity && bravoSampleSize([10, 0], 0.05).sampleSize === Infinity, 'RLA: illustrative BRAVO is finite for a real margin, ∞ for a tie / unopposed (no NaN)');
+
+  // Robustness: malformed anchor rejects without throwing (bad hex → caught).
+  check(noThrow(() => verifyAnchor({ ...anchor, signerPub: 'zz'.repeat(32) }, manifest, exp).ok) === false, 'RLA anchor: a malformed anchor is rejected without throwing');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);

@@ -23,6 +23,7 @@ import {
 } from './structured.js';
 import { runRankedElection, verifyRankedTranscript, type RankedVoter } from './ranked.js';
 import { runMixnetElection, verifyMixnetTranscript, type MixnetVoter } from './mixnet-irv.js';
+import { makeManifest, buildAnchor, verifyAnchor, toArloManifestCsv, bravoSampleSize, type BatchRow } from './rla.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { verifyTranscript, type VerifyResult } from './verify.js';
 
@@ -203,6 +204,21 @@ for (const [n, rd] of irvT.rounds.entries()) {
 }
 console.log(`   ${irvV.ok ? '🟢 VERIFIED' : '🔴 REJECTED'} — ballots shuffled by a proven re-encryption mixnet, then threshold-decrypted and tabulated; the verifier re-runs the rounds.`);
 console.log('   ⚠ IRV REVEALS the anonymized ranking multiset (hides only WHICH voter cast which) — weaker than Borda. Not coercion-resistant.\n');
+
+console.log('PAPER + RLA HYBRID (ADR-0004) — digital is the transparent companion; paper is the legal record:');
+line();
+const eaKey = issueCredential(); // the named election-authority / ceremony key
+const paperBatches: BatchRow[] = [{ batchId: 'precinct-1', ballotCount: 4 }, { batchId: 'precinct-2', ballotCount: 3 }];
+const manifest = makeManifest(t.contest, paperBatches);
+const anchor = buildAnchor({ contest: t.contest, boardRoot: t.boardRoot, numVoters: t.numVoters, publicKey: t.publicKey, manifest, signer: eaKey, anchoredAt: '2026-06-06T00:00:00Z' });
+const av = verifyAnchor(anchor, manifest, { boardRoot: t.boardRoot, numVoters: t.numVoters, publicKey: pointToHex(t.publicKey), signerPub: pointToHex(eaKey.pub) });
+console.log(`   Digital board root ${t.boardRoot.slice(0, 18)}…  ⟷  paper manifest root ${anchor.paperManifestRoot.slice(0, 18)}…`);
+console.log(`   Authority-signed anchor binds both records: ${av.ok ? '🟢 VERIFIED' : '🔴 REJECTED'}  (${manifest.paperBallotsTotal} paper = ${t.numVoters} digital ballots)`);
+console.log('   Ballot manifest for VotingWorks Arlo / SHANGRLA — run the risk-limiting audit on the PAPER:');
+console.log('     ' + toArloManifestCsv(manifest).split('\n').join('\n     '));
+const bravo = bravoSampleSize(t.results, 0.05);
+console.log(`   Illustrative ballot-polling sample (α=0.05): ~${bravo.sampleSize} paper ballots, margin ${bravo.marginPct.toFixed(0)}% — NOT authoritative; Arlo/SHANGRLA decide.`);
+console.log('   ⚠ Paper is the legal record; the RLA on paper is what catches an endpoint/tabulation flip. Digital ≠ software independence (ADR-0004).\n');
 
 // Publish the transcripts so anyone can re-verify them from the public record alone.
 mkdirSync('out', { recursive: true });

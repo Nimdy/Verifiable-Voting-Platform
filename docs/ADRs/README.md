@@ -10,3 +10,4 @@
 | [0006](ADR-0006-the-independent-verifier-is-implemented-in-a-different-langu.md) | The independent verifier is implemented in a different language and by a different team than the core | Accepted |
 | [0007](ADR-0007-use-ristretto255-with-exponential-elgamal-following-election.md) | Use ristretto255 with exponential ElGamal following ElectionGuard 2.x; no hand-rolled ciphers | Accepted |
 | [0008](ADR-0008-receipt-freeness-never-give-a-voter-a-transferable-proof-of-.md) | Receipt-freeness: never give a voter a transferable proof of how they voted | Accepted |
+| [0009](ADR-0009-the-digital-paper-anchor-binds-the-board-root-to-the-paper-bal.md) | A signed digital↔paper anchor binds the bulletin-board root to the paper ballot manifest; secret-ballot paths use ballot-polling RLAs, never per-ballot CVRs | Accepted |

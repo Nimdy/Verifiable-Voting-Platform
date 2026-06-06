@@ -15,4 +15,5 @@ export * from './structured.js';
 export * from './ranked.js';
 export * from './mixnet.js';
 export * from './mixnet-irv.js';
+export * from './rla.js';
 export * from './transcript-json.js';
