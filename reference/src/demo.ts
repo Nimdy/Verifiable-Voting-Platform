@@ -170,6 +170,13 @@ for (const top of childrenOf(spec, undefined)) {
 }
 console.log(`   tags: ${allTags(spec).join(', ')}   ·   all ${sResult.results.length} contests verify: ${sVerify.ok ? '✅' : '❌'}\n`);
 
+console.log('MULTI-SEAT — "vote for exactly 2 of 4" (block voting):');
+line();
+const seatCands = ['Ana', 'Ben', 'Cy', 'Dee'];
+const seatVoters: Voter[] = packets.slice(0, 5).map((pk, i) => ({ credential: pk.credential, choice: [i % 4, (i + 1) % 4] }));
+const seatT = runElection('Board seats (pick 2)', seatCands, seatVoters, keys, eligibleRoll, undefined, 2);
+console.log('   results: ' + seatCands.map((c, j) => `${c} ${seatT.results[j]}`).join('   ') + `   ·   verify: ${verifyTranscript(seatT).ok ? '✅' : '❌'}  (Σ = 2×${seatT.numVoters})\n`);
+
 // Publish the transcript so anyone can re-verify it from the public record alone.
 mkdirSync('out', { recursive: true });
 writeFileSync('out/transcript.json', transcriptToJSON(t));

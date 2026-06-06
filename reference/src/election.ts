@@ -8,7 +8,7 @@ import {
   encrypt, addCiphertexts, decryptionShare, discreteLog, type Ciphertext,
 } from './elgamal.js';
 import {
-  proveBit, verifyBit, proveDecryption, proveSumOne, verifySumOne,
+  proveBit, verifyBit, proveDecryption, proveSumEqual, verifySumEqual,
   type BitProof, type DecProof, type SumProof,
 } from './proofs.js';
 import { randScalar, mul, mod, N, ZERO, pointToHex, type Point } from './group.js';
@@ -24,10 +24,11 @@ export interface Selection {
   sumProof: SumProof;
 }
 
-/** One voter: their (pseudonymous) credential and the candidate index they chose. */
+/** One voter: their (pseudonymous) credential and their choice — a single candidate index
+ *  (plurality) or an array of indices (multi-seat "vote for exactly N"). */
 export interface Voter {
   credential: Credential;
-  choice: number;
+  choice: number | number[];
 }
 
 export interface BallotEntry {
@@ -47,6 +48,7 @@ export interface Transcript {
   contest: string;
   candidates: string[];
   numVoters: number;
+  selectionLimit: number; // L — how many candidates each ballot selects (1 = plurality)
   eligibleRoll: Point[];
   publicKey: Point;
   commitments: Point[]; // Feldman commitments; verifier recomputes each trustee's verification key
@@ -71,17 +73,22 @@ export function setupKeys(n: number, k: number): KeySetup {
  */
 export function encryptSelection(
   pk: Point,
-  choice: number,
+  choice: number | number[],
   numCandidates: number,
+  selectionLimit = 1,
 ): { selection: Selection; randomness: bigint[] } {
-  if (!Number.isInteger(choice) || choice < 0 || choice >= numCandidates) {
-    throw new Error(`choice ${choice} out of range [0, ${numCandidates})`);
+  const picks = Array.isArray(choice) ? [...new Set(choice)] : [choice];
+  if (picks.length !== selectionLimit) {
+    throw new Error(`expected exactly ${selectionLimit} selection(s), got ${picks.length}`);
+  }
+  for (const c of picks) {
+    if (!Number.isInteger(c) || c < 0 || c >= numCandidates) throw new Error(`choice ${c} out of range [0, ${numCandidates})`);
   }
   const enc: Ciphertext[] = [];
   const bitProofs: BitProof[] = [];
   const randomness: bigint[] = [];
   for (let j = 0; j < numCandidates; j++) {
-    const v: 0 | 1 = j === choice ? 1 : 0;
+    const v: 0 | 1 = picks.includes(j) ? 1 : 0;
     const r = randScalar();
     const ct = encrypt(pk, BigInt(v), r);
     enc.push(ct);
@@ -89,7 +96,7 @@ export function encryptSelection(
     randomness.push(r);
   }
   const R = randomness.reduce((acc, r) => mod(acc + r, N), 0n);
-  const sumProof = proveSumOne(pk, addCiphertexts(enc), R);
+  const sumProof = proveSumEqual(pk, addCiphertexts(enc), R, selectionLimit);
   return { selection: { enc, bitProofs, sumProof }, randomness };
 }
 
@@ -99,18 +106,19 @@ export function encryptSelection(
  * (so a successful audit attests a fully castable ballot). A spoiled ballot is then
  * discarded and the voter re-votes, so a cheating device cannot predict an audit.
  */
-export function auditSelection(pk: Point, sel: Selection, randomness: bigint[], choice: number): boolean {
+export function auditSelection(pk: Point, sel: Selection, randomness: bigint[], choice: number | number[]): boolean {
+  const picks = Array.isArray(choice) ? [...new Set(choice)] : [choice];
   if (randomness.length !== sel.enc.length) return false;
-  if (!Number.isInteger(choice) || choice < 0 || choice >= sel.enc.length) return false;
+  for (const c of picks) if (!Number.isInteger(c) || c < 0 || c >= sel.enc.length) return false;
   for (let j = 0; j < sel.enc.length; j++) {
-    const v: 0 | 1 = j === choice ? 1 : 0;
+    const v: 0 | 1 = picks.includes(j) ? 1 : 0;
     const expected = encrypt(pk, BigInt(v), randomness[j]!);
     if (!expected.a.equals(sel.enc[j]!.a) || !expected.b.equals(sel.enc[j]!.b)) return false;
   }
   for (let j = 0; j < sel.enc.length; j++) {
     if (!verifyBit(pk, sel.enc[j]!, sel.bitProofs[j]!)) return false;
   }
-  return verifySumOne(pk, addCiphertexts(sel.enc), sel.sumProof);
+  return verifySumEqual(pk, addCiphertexts(sel.enc), sel.sumProof, picks.length);
 }
 
 /**
@@ -126,6 +134,7 @@ export function runElection(
   keys: KeySetup,
   eligibleRoll: Point[],
   participants?: number[],
+  selectionLimit = 1,
 ): Transcript {
   const K = candidates.length;
   const publicKey = keys.publicKey;
@@ -133,7 +142,7 @@ export function runElection(
 
   // --- voters encrypt locally, prove validity, and SIGN with their credential ---
   const prepared = voters.map((v) => {
-    const { selection } = encryptSelection(publicKey, v.choice, K);
+    const { selection } = encryptSelection(publicKey, v.choice, K, selectionLimit);
     const sig = sign(v.credential.secret, signingBytes(ctx, selection));
     return { credentialPub: v.credential.pub, selection, sig };
   });
@@ -167,7 +176,7 @@ export function runElection(
   });
 
   return {
-    contest, candidates, numVoters: voters.length, eligibleRoll, publicKey,
+    contest, candidates, numVoters: voters.length, selectionLimit, eligibleRoll, publicKey,
     commitments: keys.commitments, trustees: keys.trustees.length, threshold: keys.threshold,
     ballots, boardRoot: board.root(), aggregates, decShares, results,
   };

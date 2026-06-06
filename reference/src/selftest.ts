@@ -12,6 +12,7 @@ import {
 } from './elgamal.js';
 import {
   proveBit, verifyBit, proveDecryption, verifyDecryption, proveSumOne, verifySumOne,
+  proveSumEqual, verifySumEqual,
 } from './proofs.js';
 import { issueCredential, sign, verifySig } from './credentials.js';
 import {
@@ -338,6 +339,37 @@ for (let trial = 0; trial < 40; trial++) {
   check(lp, 'validateSpec rejects a leaf used as a parent');
   let nl = false; try { validateSpec({ title: 'x', contests: [{ id: 'g', title: 'G', tags: [] }] }); } catch { nl = true; }
   check(nl, 'validateSpec rejects a spec with no leaf contest');
+}
+
+// 15. Multi-seat "vote for exactly N" — sound generalization of exactly-one.
+{
+  const keys = setupKeys(3, 2);
+  const r = new Registrar();
+  const packets = r.register([{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }]);
+  const roll = r.publishedRoll();
+  const cands = ['w', 'x', 'y', 'z'];
+  const voters: Voter[] = packets.map((pk, i) => ({ credential: pk.credential, choice: [i % 4, (i + 1) % 4] }));
+  const t = runElection('seats', cands, voters, keys, roll, undefined, 2);
+  check(verifyTranscript(t).ok, 'multi-seat (exactly-2) election verifies');
+  check(t.results.reduce((a, b) => a + b, 0) === 2 * t.numVoters, 'multi-seat totals sum to L×voters');
+  check(verifyTranscript({ ...t, selectionLimit: 1 }).ok === false, 'a tampered selectionLimit is rejected');
+  let wc = false; try { encryptSelection(t.publicKey, [0], 4, 2); } catch { wc = true; }
+  check(wc, 'encryptSelection rejects the wrong number of picks');
+  const h = keys.publicKey;
+  const build = (bits: number[]) => {
+    const enc = [];
+    const rs: bigint[] = [];
+    for (let jx = 0; jx < 4; jx++) { const rr = randScalar(); enc.push(encrypt(h, bits.includes(jx) ? 1n : 0n, rr)); rs.push(rr); }
+    return { enc, R: rs.reduce((a, b) => mod(a + b, N), 0n) };
+  };
+  const two = build([0, 1]);
+  check(verifySumEqual(h, addCiphertexts(two.enc), proveSumEqual(h, addCiphertexts(two.enc), two.R, 2), 2), 'sumEqual(2) accepts exactly 2');
+  const three = build([0, 1, 2]);
+  check(!verifySumEqual(h, addCiphertexts(three.enc), proveSumEqual(h, addCiphertexts(three.enc), three.R, 2), 2), 'sumEqual(2) rejects 3');
+  // Benaloh audit works for multi-seat (L>1)
+  const ms = encryptSelection(keys.publicKey, [0, 2], 4, 2);
+  check(auditSelection(keys.publicKey, ms.selection, ms.randomness, [0, 2]), 'multi-seat audit passes for the real picks');
+  check(!auditSelection(keys.publicKey, ms.selection, ms.randomness, [0, 1]), 'multi-seat audit fails for different picks');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);

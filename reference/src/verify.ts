@@ -9,7 +9,7 @@
 // different language by a different team so a single bug cannot hide itself.
 
 import { addCiphertexts, discreteLog } from './elgamal.js';
-import { verifyBit, verifyDecryption, verifySumOne } from './proofs.js';
+import { verifyBit, verifyDecryption, verifySumEqual } from './proofs.js';
 import { verificationKeyAt, combineShares } from './threshold.js';
 import { verifySig } from './credentials.js';
 import { ZERO, type Point } from './group.js';
@@ -33,12 +33,12 @@ const hx = (p: Point): string =>
   Array.from(p.toRawBytes()).map((x) => x.toString(16).padStart(2, '0')).join('');
 
 /** A selection is valid iff it has exactly K columns, each a 0/1 bit, and exactly one is selected. */
-function selectionValid(pk: Point, sel: Selection, K: number): boolean {
+function selectionValid(pk: Point, sel: Selection, K: number, L: number): boolean {
   if (sel.enc.length !== K || sel.bitProofs.length !== K) return false;
   for (let j = 0; j < K; j++) {
     if (!verifyBit(pk, sel.enc[j]!, sel.bitProofs[j]!)) return false;
   }
-  return verifySumOne(pk, addCiphertexts(sel.enc), sel.sumProof);
+  return verifySumEqual(pk, addCiphertexts(sel.enc), sel.sumProof, L);
 }
 
 export function verifyTranscript(t: Transcript): VerifyResult {
@@ -67,6 +67,7 @@ function verifyInner(t: Transcript): VerifyResult {
     // field used as the discrete-log bound and tally-sum target (denial-of-verification / a
     // self-consistent sum check). Pinning it to ballots.length closes both.
     Number.isInteger(t.numVoters) && t.numVoters === t.ballots.length &&
+    Number.isInteger(t.selectionLimit) && t.selectionLimit >= 1 && t.selectionLimit <= K &&
     t.commitments.length === k &&
     t.aggregates.length === K && t.results.length === K &&
     t.ballots.every((b) => b.selection.enc.length === K && b.selection.bitProofs.length === K) &&
@@ -123,9 +124,9 @@ function verifyInner(t: Transcript): VerifyResult {
 
   // 4. Every ballot selects exactly one candidate (each ciphertext a 0/1 bit; sum == 1).
   let invalid = 0;
-  for (const b of t.ballots) if (!selectionValid(t.publicKey, b.selection, K)) invalid++;
+  for (const b of t.ballots) if (!selectionValid(t.publicKey, b.selection, K, t.selectionLimit)) invalid++;
   checks.push({
-    name: 'Every ballot selects exactly one candidate (zero-knowledge)',
+    name: `Every ballot selects exactly ${t.selectionLimit} candidate(s) (zero-knowledge)`,
     ok: invalid === 0,
     detail: invalid === 0 ? `${t.ballots.length}/${t.ballots.length} valid` : `${invalid} INVALID ballot(s)`,
   });
@@ -179,11 +180,12 @@ function verifyInner(t: Transcript): VerifyResult {
       tallyBad++;
     }
   }
-  const sumOk = results.reduce((a, b) => a + b, 0) === t.numVoters;
+  const expectedSum = t.selectionLimit * t.numVoters;
+  const sumOk = results.reduce((a, b) => a + b, 0) === expectedSum;
   checks.push({
     name: 'Published per-candidate totals equal the decrypted aggregates',
     ok: tallyBad === 0 && sumOk,
-    detail: tallyBad === 0 && sumOk ? `Σ = ${t.numVoters}` : `${tallyBad} mismatch, Σ=${results.reduce((a, b) => a + b, 0)}`,
+    detail: tallyBad === 0 && sumOk ? `Σ = ${expectedSum}` : `${tallyBad} mismatch, Σ=${results.reduce((a, b) => a + b, 0)}`,
   });
 
   return { ok: checks.every((c) => c.ok), checks, results: tallyBad === 0 ? results : null };

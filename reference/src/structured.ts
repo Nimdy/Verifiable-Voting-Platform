@@ -20,6 +20,7 @@ export interface ContestSpec {
   tags: string[];
   parent?: string; // id of the parent group (drill-down); undefined = top level
   candidates?: string[]; // present → a leaf contest you vote in; absent → a group/category node
+  selectionLimit?: number; // how many to choose (default 1 = plurality; >1 = multi-seat block)
 }
 
 export interface ElectionSpec {
@@ -29,7 +30,7 @@ export interface ElectionSpec {
 
 export interface StructuredVoter {
   credential: Credential;
-  choices: Record<string, number>; // leaf contest id → candidate index (omit a contest to abstain from it)
+  choices: Record<string, number | number[]>; // leaf id → candidate index (or indices for multi-seat); omit to abstain
 }
 
 export interface ContestResult {
@@ -95,7 +96,7 @@ export function runStructuredElection(
     const contestVoters = voters
       .filter((v) => Object.hasOwn(v.choices, c.id))
       .map((v) => ({ credential: v.credential, choice: v.choices[c.id]! }));
-    const transcript = runElection(c.id, c.candidates!, contestVoters, keys, eligibleRoll);
+    const transcript = runElection(c.id, c.candidates!, contestVoters, keys, eligibleRoll, undefined, c.selectionLimit ?? 1);
     return { id: c.id, title: c.title, tags: c.tags, candidates: c.candidates!, transcript };
   });
   return { spec, results };
@@ -144,7 +145,8 @@ export function verifyStructured(result: ElectionResult): {
     const idOk = r.id === r.transcript.contest;
     const candsT = JSON.stringify(r.transcript.candidates) === JSON.stringify(r.candidates);
     const candsS = leaf ? JSON.stringify(leaf.candidates) === JSON.stringify(r.candidates) : false;
-    if (!(idOk && candsT && candsS)) mismatch++;
+    const limOk = leaf ? r.transcript.selectionLimit === (leaf.selectionLimit ?? 1) : false;
+    if (!(idOk && candsT && candsS && limOk)) mismatch++;
   }
   checks.push({ name: 'Each result matches its spec leaf and its own transcript', ok: mismatch === 0, detail: mismatch ? `${mismatch} mismatched` : undefined });
 

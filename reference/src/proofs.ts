@@ -140,21 +140,31 @@ export interface SumProof {
   s: bigint;
 }
 
-export function proveSumOne(h: Point, agg: Ciphertext, R: bigint): SumProof {
+/**
+ * Generalized: proof that the homomorphic SUM encrypts exactly L (the selection limit) —
+ * i.e. the voter selected exactly L candidates. L is bound into the challenge (via L·G) and
+ * the verification target, so a proof for L cannot be reused as a proof for L'. Combined with
+ * each ciphertext being a 0/1 bit, this pins the ballot to exactly L valid selections.
+ */
+export function proveSumEqual(h: Point, agg: Ciphertext, R: bigint, L: number): SumProof {
   const t = randScalar();
   const Tg = mul(G, t);
   const Th = mul(h, t);
-  const c = hashToScalar('sum-one', [h, agg.a, agg.b, Tg, Th]);
+  const c = hashToScalar('sum-eq', [h, agg.a, agg.b, mul(G, BigInt(L)), Tg, Th]);
   const s = mod(t + c * R, N);
   return { Tg, Th, c, s };
 }
 
-export function verifySumOne(h: Point, agg: Ciphertext, p: SumProof): boolean {
+export function verifySumEqual(h: Point, agg: Ciphertext, p: SumProof, L: number): boolean {
   if (!inRange(p.c) || !inRange(p.s)) return false;
-  const target = agg.b.subtract(G); // equals h^R iff Σ votes == 1
-  const c = hashToScalar('sum-one', [h, agg.a, agg.b, p.Tg, p.Th]);
+  const target = agg.b.subtract(mul(G, BigInt(L))); // equals h^R iff Σ votes == L
+  const c = hashToScalar('sum-eq', [h, agg.a, agg.b, mul(G, BigInt(L)), p.Tg, p.Th]);
   if (c !== p.c) return false;
   if (!mul(G, p.s).equals(p.Tg.add(mul(agg.a, p.c)))) return false; // g^s == Tg · agg.a^c
-  if (!mul(h, p.s).equals(p.Th.add(mul(target, p.c)))) return false; // h^s == Th · (agg.b − g)^c
+  if (!mul(h, p.s).equals(p.Th.add(mul(target, p.c)))) return false; // h^s == Th · (agg.b − L·g)^c
   return true;
 }
+
+/** Exactly-one is the L=1 special case (plurality / single-choice). */
+export const proveSumOne = (h: Point, agg: Ciphertext, R: bigint): SumProof => proveSumEqual(h, agg, R, 1);
+export const verifySumOne = (h: Point, agg: Ciphertext, p: SumProof): boolean => verifySumEqual(h, agg, p, 1);
