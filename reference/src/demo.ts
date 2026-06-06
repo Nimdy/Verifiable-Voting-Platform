@@ -21,6 +21,7 @@ import {
   runStructuredElection, verifyStructured, childrenOf, allTags, isLeaf,
   type ElectionSpec, type StructuredVoter,
 } from './structured.js';
+import { encryptRanking, verifyRankingValid } from './ranked.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { verifyTranscript, type VerifyResult } from './verify.js';
 
@@ -176,6 +177,17 @@ const seatCands = ['Ana', 'Ben', 'Cy', 'Dee'];
 const seatVoters: Voter[] = packets.slice(0, 5).map((pk, i) => ({ credential: pk.credential, choice: [i % 4, (i + 1) % 4] }));
 const seatT = runElection('Board seats (pick 2)', seatCands, seatVoters, keys, eligibleRoll, undefined, 2);
 console.log('   results: ' + seatCands.map((c, j) => `${c} ${seatT.results[j]}`).join('   ') + `   ·   verify: ${verifyTranscript(seatT).ok ? '✅' : '❌'}  (Σ = 2×${seatT.numVoters})\n`);
+
+console.log('RANKED-CHOICE — a strict ranking as a verifiable permutation matrix:');
+line();
+const rkCands = ['Ada', 'Grace', 'Alan', 'Linus'];
+const ranking = [2, 0, 3, 1]; // candidate i → rank
+const { ballot: rkBallot } = encryptRanking(keys.publicKey, ranking);
+console.log('   Ranking: ' + rkCands.map((c, i) => `${c} #${ranking[i]! + 1}`).join('   '));
+console.log(`   Valid permutation-matrix ballot?  ${verifyRankingValid(keys.publicKey, rkBallot) ? '✅ YES' : '❌ NO'}`);
+const dupRk = { ...rkBallot, matrix: rkBallot.matrix.map((row, i) => row.map((c, r) => (i === 0 && r === 0 ? { a: c.a, b: c.b.add(keys.publicKey) } : c))) };
+console.log(`   A tampered ballot?  ${verifyRankingValid(keys.publicKey, dupRk) ? '🔴 accepted' : '✅ rejected'}  (duplicate-rank rejection is covered in the self-test)`);
+console.log('   (Borda tally + full ranked elections + the Python cross-verifier are the next increments — #49.)\n');
 
 // Publish the transcript so anyone can re-verify it from the public record alone.
 mkdirSync('out', { recursive: true });

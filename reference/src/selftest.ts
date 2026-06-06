@@ -7,6 +7,7 @@ import { Registrar } from './registrar.js';
 import {
   runStructuredElection, verifyStructured, validateSpec, type ElectionSpec, type StructuredVoter,
 } from './structured.js';
+import { encryptRanking, verifyRankingValid, bordaBallotTotals } from './ranked.js';
 import {
   addCiphertexts, combinePublicKey, decryptionShare, discreteLog, encrypt, trusteeKeygen,
 } from './elgamal.js';
@@ -370,6 +371,41 @@ for (let trial = 0; trial < 40; trial++) {
   const ms = encryptSelection(keys.publicKey, [0, 2], 4, 2);
   check(auditSelection(keys.publicKey, ms.selection, ms.randomness, [0, 2]), 'multi-seat audit passes for the real picks');
   check(!auditSelection(keys.publicKey, ms.selection, ms.randomness, [0, 1]), 'multi-seat audit fails for different picks');
+}
+
+// 16. Ranked-choice validity (permutation matrix) + homomorphic Borda correctness.
+{
+  const keys = setupKeys(1, 1);
+  const pk = keys.publicKey;
+  const x = keys.trustees[0]!.share;
+  const ranking = [2, 0, 3, 1]; // K=4
+  const { ballot } = encryptRanking(pk, ranking);
+  check(verifyRankingValid(pk, ballot), 'a valid strict ranking verifies');
+  const borda = bordaBallotTotals(ballot).map((ct) => discreteLog(ct.b.subtract(mul(ct.a, x)), 3));
+  check(JSON.stringify(borda) === JSON.stringify([1, 3, 0, 2]), 'homomorphic Borda totals decrypt correctly');
+  const bad = { ...ballot, matrix: ballot.matrix.map((row, i) => row.map((c, r) => (i === 0 && r === 0 ? { a: c.a, b: c.b.add(pk) } : c))) };
+  check(!verifyRankingValid(pk, bad), 'a tampered ranking matrix is rejected');
+  let np = false; try { encryptRanking(pk, [0, 0, 1, 2]); } catch { np = true; }
+  check(np, 'encryptRanking rejects a non-permutation');
+
+  // Hand-built duplicate-rank ballot (candidates 0 and 1 both rank 0 → column 0 sums to 2) is rejected.
+  const asg = [0, 0, 2, 3];
+  const K = 4;
+  const mtx: ReturnType<typeof encrypt>[][] = [];
+  const bps: ReturnType<typeof proveBit>[][] = [];
+  const rnd: bigint[][] = [];
+  for (let i = 0; i < K; i++) {
+    mtx[i] = []; bps[i] = []; rnd[i] = [];
+    for (let r = 0; r < K; r++) {
+      const v: 0 | 1 = asg[i] === r ? 1 : 0;
+      const rr = randScalar();
+      const ct = encrypt(pk, BigInt(v), rr);
+      mtx[i]!.push(ct); bps[i]!.push(proveBit(pk, ct, v, rr)); rnd[i]!.push(rr);
+    }
+  }
+  const rs = mtx.map((row, i) => proveSumEqual(pk, addCiphertexts(row), rnd[i]!.reduce((a, b) => mod(a + b, N), 0n), 1));
+  const cs = Array.from({ length: K }, (_, r) => proveSumEqual(pk, addCiphertexts(mtx.map((row) => row[r]!)), rnd.reduce((a, row) => mod(a + row[r]!, N), 0n), 1));
+  check(!verifyRankingValid(pk, { matrix: mtx, bitProofs: bps, rowSums: rs, colSums: cs }), 'duplicate-rank ballot (a column sums to 2) is rejected');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);

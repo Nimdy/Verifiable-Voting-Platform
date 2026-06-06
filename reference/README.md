@@ -41,6 +41,9 @@ npm run typecheck
 - **Hierarchical, tagged ballots** — an election is a tree of contests (parent groups →
   drill-down leaf contests) with tags; each leaf is an independently verifiable sub-election,
   and `verifyStructured` authenticates the whole bundle against the spec (no omit/duplicate/relabel).
+- **Ranked-choice (validity)** — a strict ranking is a K×K **permutation matrix** of encrypted bits
+  (every row and column sums to 1), verified by reusing the bit + exactly-L proofs; the homomorphic
+  **Borda** tally needs no mixnet. *(Full ranked elections + IRV-via-mixnet: #49.)*
 - **Public bulletin board** — an append-only RFC-6962 Merkle log, context-bound to the
   election so ballots can't be replayed elsewhere; altering any ballot changes the root.
 - **Independent verifier** — rechecks the entire public transcript from scratch, and
@@ -83,6 +86,7 @@ These are tracked on the [roadmap](../docs/ROADMAP.md) (M1/M3), not oversights:
 | `src/election.ts` | runs a multi-candidate election; encrypt/audit a selection |
 | `src/session.ts` | cast-or-challenge (Benaloh) voting session |
 | `src/structured.ts` | hierarchical, tagged multi-contest elections + bundle verification |
+| `src/ranked.ts` | ranked-choice ballots: permutation-matrix validity + homomorphic Borda |
 | `src/verify.ts` | the independent verifier (always returns a verdict) |
 | `src/transcript-json.ts` | canonical JSON (de)serialization of a published transcript |
 | `src/verify-cli.ts` | standalone CLI: re-verify a transcript file from the public record alone |
