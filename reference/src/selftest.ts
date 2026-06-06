@@ -5,6 +5,9 @@
 import { G, N, ZERO, mod, mul, randScalar, scalarTo32, invMod, pointToHex } from './group.js';
 import { Registrar } from './registrar.js';
 import {
+  runStructuredElection, verifyStructured, validateSpec, type ElectionSpec, type StructuredVoter,
+} from './structured.js';
+import {
   addCiphertexts, combinePublicKey, decryptionShare, discreteLog, encrypt, trusteeKeygen,
 } from './elgamal.js';
 import {
@@ -286,6 +289,55 @@ for (let trial = 0; trial < 40; trial++) {
   const base2 = runElection('e', ['x', 'y'], voters, keys, roll);
   check(verifyTranscript({ ...base2, numVoters: 1_000_000 }).ok === false, 'verifier rejects numVoters != ballot count (and does not hang)');
   check(verifyTranscript({ ...base2, eligibleRoll: [...base2.eligibleRoll, base2.eligibleRoll[0]!] }).ok === false, 'verifier rejects a duplicate eligible-roll entry');
+}
+
+// 14. Structured (hierarchical) elections: tree + tags; per-leaf verify; cross-contest replay rejected.
+{
+  const spec: ElectionSpec = {
+    title: 'Community decisions',
+    contests: [
+      { id: 'budget', title: 'Budget', tags: ['budget'] },
+      { id: 'park', title: 'Park budget', tags: ['budget', 'parks'], parent: 'budget', candidates: ['Low', 'Mid', 'High'] },
+      { id: 'lib', title: 'Library hours', tags: ['budget'], parent: 'budget', candidates: ['Keep', 'Extend'] },
+      { id: 'fest', title: 'Festival theme', tags: ['events'], candidates: ['Music', 'Food', 'Art'] },
+    ],
+  };
+  const r = new Registrar();
+  const packets = r.register([{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
+  const keys = setupKeys(3, 2);
+  const roll = r.publishedRoll();
+  const voters: StructuredVoter[] = [
+    { credential: packets[0]!.credential, choices: { park: 0, lib: 1, fest: 2 } },
+    { credential: packets[1]!.credential, choices: { park: 2, lib: 1 } }, // abstains from fest
+    { credential: packets[2]!.credential, choices: { park: 0, lib: 0, fest: 0 } },
+  ];
+  const result = runStructuredElection(spec, voters, keys, roll);
+  check(verifyStructured(result).ok, 'structured election: every leaf contest verifies');
+  const park = result.results.find((x) => x.id === 'park')!;
+  check(JSON.stringify(park.transcript.results) === JSON.stringify([2, 0, 1]), 'park tally correct (Low2, Mid0, High1)');
+  const fest = result.results.find((x) => x.id === 'fest')!;
+  check(fest.transcript.numVoters === 2, 'fest has 2 voters (one abstained)');
+
+  // cross-contest replay: a ballot signed for 'park' must NOT verify inside 'fest' (both K=3) — context binding.
+  const parkBallot = park.transcript.ballots[0]!;
+  const spliced = { ...fest.transcript, ballots: [...fest.transcript.ballots, parkBallot], numVoters: fest.transcript.ballots.length + 1 };
+  check(verifyTranscript(spliced).ok === false, 'a ballot from another contest is rejected (context binding)');
+
+  // Structured composition attacks must be caught by verifyStructured (not just per-transcript).
+  check(verifyStructured({ spec, results: result.results.slice(0, 2) }).ok === false, 'omitting a contest is rejected');
+  check(verifyStructured({ spec, results: [...result.results, result.results[0]!] }).ok === false, 'duplicating a contest is rejected');
+  const swapped = result.results.map((r, idx) => (idx === 0 ? { ...r, id: 'fest', candidates: ['Music', 'Food', 'Art'] } : r));
+  check(verifyStructured({ spec, results: swapped }).ok === false, 'relabeling/substituting a contest is rejected');
+  check(verifyStructured(result).ok, 'the honest structured result still verifies');
+
+  let dup = false; try { validateSpec({ title: 'x', contests: [{ id: 'a', title: 'A', tags: [] }, { id: 'a', title: 'B', tags: [] }] }); } catch { dup = true; }
+  check(dup, 'validateSpec rejects duplicate contest ids');
+  let mp = false; try { validateSpec({ title: 'x', contests: [{ id: 'a', title: 'A', tags: [], parent: 'nope' }] }); } catch { mp = true; }
+  check(mp, 'validateSpec rejects a missing parent');
+  let lp = false; try { validateSpec({ title: 'x', contests: [{ id: 'p', title: 'P', tags: [], candidates: ['a', 'b'] }, { id: 'c', title: 'C', tags: [], parent: 'p', candidates: ['x', 'y'] }] }); } catch { lp = true; }
+  check(lp, 'validateSpec rejects a leaf used as a parent');
+  let nl = false; try { validateSpec({ title: 'x', contests: [{ id: 'g', title: 'G', tags: [] }] }); } catch { nl = true; }
+  check(nl, 'validateSpec rejects a spec with no leaf contest');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);

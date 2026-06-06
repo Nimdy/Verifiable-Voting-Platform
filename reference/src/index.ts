@@ -11,4 +11,5 @@ export * from './bulletin.js';
 export * from './election.js';
 export * from './session.js';
 export * from './verify.js';
+export * from './structured.js';
 export * from './transcript-json.js';

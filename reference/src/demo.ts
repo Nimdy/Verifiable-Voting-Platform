@@ -17,6 +17,10 @@ import {
 } from './election.js';
 import { newSession, prepareBallot, challengeBallot, castBallot } from './session.js';
 import { transcriptToJSON } from './transcript-json.js';
+import {
+  runStructuredElection, verifyStructured, childrenOf, allTags, isLeaf,
+  type ElectionSpec, type StructuredVoter,
+} from './structured.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { verifyTranscript, type VerifyResult } from './verify.js';
 
@@ -134,6 +138,37 @@ console.log('8) BELOW QUORUM — an insider drops trustees so fewer than k remai
 line();
 const fewer = { ...t, decShares: t.decShares.slice(0, keys.threshold - 1) };
 report(`fewer than ${keys.threshold} trustees cannot produce a valid decryption`, verifyTranscript(fewer));
+
+console.log('STRUCTURED BALLOT — parent → drill-down contests with tags:');
+line();
+const spec: ElectionSpec = {
+  title: 'Community decisions',
+  contests: [
+    { id: 'budget', title: 'Budget', tags: ['budget'] },
+    { id: 'park', title: 'Park budget', tags: ['budget', 'parks'], parent: 'budget', candidates: ['Low', 'Mid', 'High'] },
+    { id: 'lib', title: 'Library hours', tags: ['budget'], parent: 'budget', candidates: ['Keep', 'Extend'] },
+    { id: 'fest', title: 'Festival theme', tags: ['events'], candidates: ['Music', 'Food', 'Art'] },
+  ],
+};
+const sVoters: StructuredVoter[] = packets.slice(0, 5).map((pk, i) => ({
+  credential: pk.credential,
+  choices: { park: i % 3, lib: i % 2, ...(i % 2 ? { fest: i % 3 } : {}) },
+}));
+const sResult = runStructuredElection(spec, sVoters, keys, eligibleRoll);
+const sVerify = verifyStructured(sResult);
+for (const top of childrenOf(spec, undefined)) {
+  const fmt = (id: string, cands: string[]) => {
+    const res = sResult.results.find((r) => r.id === id)!;
+    return cands.map((c, j) => `${c} ${res.transcript.results[j]}`).join('  ');
+  };
+  if (isLeaf(top)) {
+    console.log(`   ▸ ${top.title} [${top.tags.join(',')}]: ${fmt(top.id, top.candidates!)}`);
+  } else {
+    console.log(`   ▸ ${top.title} [${top.tags.join(',')}]  (drill down)`);
+    for (const child of childrenOf(spec, top.id)) console.log(`      • ${child.title}: ${fmt(child.id, child.candidates!)}`);
+  }
+}
+console.log(`   tags: ${allTags(spec).join(', ')}   ·   all ${sResult.results.length} contests verify: ${sVerify.ok ? '✅' : '❌'}\n`);
 
 // Publish the transcript so anyone can re-verify it from the public record alone.
 mkdirSync('out', { recursive: true });
