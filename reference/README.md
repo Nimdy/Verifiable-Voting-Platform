@@ -38,6 +38,9 @@ npm run typecheck
 - **Cast-or-challenge (Benaloh)** — prepare a ballot, then either *challenge* it (reveal
   the randomness, audit it, and permanently discard it) or *cast* it (randomness stays
   secret). A challenged ballot can never be cast, so a cheating device can't predict an audit.
+- **Hierarchical, tagged ballots** — an election is a tree of contests (parent groups →
+  drill-down leaf contests) with tags; each leaf is an independently verifiable sub-election,
+  and `verifyStructured` authenticates the whole bundle against the spec (no omit/duplicate/relabel).
 - **Public bulletin board** — an append-only RFC-6962 Merkle log, context-bound to the
   election so ballots can't be replayed elsewhere; altering any ballot changes the root.
 - **Independent verifier** — rechecks the entire public transcript from scratch, and
@@ -79,6 +82,7 @@ These are tracked on the [roadmap](../docs/ROADMAP.md) (M1/M3), not oversights:
 | `src/codec.ts` | canonical, context-bound ballot serialization |
 | `src/election.ts` | runs a multi-candidate election; encrypt/audit a selection |
 | `src/session.ts` | cast-or-challenge (Benaloh) voting session |
+| `src/structured.ts` | hierarchical, tagged multi-contest elections + bundle verification |
 | `src/verify.ts` | the independent verifier (always returns a verdict) |
 | `src/transcript-json.ts` | canonical JSON (de)serialization of a published transcript |
 | `src/verify-cli.ts` | standalone CLI: re-verify a transcript file from the public record alone |
