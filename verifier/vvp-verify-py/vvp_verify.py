@@ -9,8 +9,9 @@ either is far less likely to hide. It re-derives everything from the public reco
 alone and trusts nothing about who produced it.
 
 Handles all transcript kinds — plurality/multi-seat, ranked-choice (Borda),
-ranked-choice IRV (mixnet), and the paper+RLA hybrid export (rla-export) —
-dispatching on the transcript's own `kind` field.
+ranked-choice IRV (mixnet), the paper+RLA hybrid export (rla-export), and the
+everlasting-privacy commitment trail (everlasting-trail) — dispatching on the
+transcript's own `kind` field.
 
     python3 vvp_verify.py <transcript.json>      # exit 0 = VERIFIED, 1 = REJECTED, 2 = usage
 
@@ -18,6 +19,7 @@ Requires: pysodium + a system libsodium.  (pip install pysodium)
 """
 import hashlib
 import json
+import re
 import sys
 
 import pysodium
@@ -45,6 +47,13 @@ def smul(p: bytes, n: int) -> bytes:
 
 
 G = pysodium.crypto_scalarmult_ristretto255_base(scalar_le(1))
+
+# Second, independent generator H for Pedersen commitments (everlasting privacy; mirrors group.ts).
+# NUMS: the ristretto255 one-way map (RFC 9496 from_hash) over SHA-512 of a fixed label, so dlog_G(H)
+# is unknown. libsodium's crypto_core_ristretto255_from_hash and @noble's hashToCurve agree byte-for-byte.
+PEDERSEN_H_LABEL = b"vvp-everlasting-pedersen-H-v1"
+PEDERSEN_H_HEX = "b66dc28b63ecfbb83fa33aad8148a54f17757fce571ad6b8df258d3cfa2a777a"
+H = pysodium.crypto_core_ristretto255_from_hash(hashlib.sha512(PEDERSEN_H_LABEL).digest())
 
 
 def padd(a: bytes, b: bytes) -> bytes:
@@ -87,8 +96,15 @@ def parse_point(h: str) -> bytes:
 
 
 def parse_scalar(s: str) -> int:
-    x = int(s)
-    if x < 0 or x >= L:
+    # Gate the STRING form to a strict canonical decimal grammar before converting. int() is permissive
+    # (underscores, Unicode digits, signs, whitespace) and JS BigInt() is permissive in OTHER ways
+    # (0x/0o/0b prefixes, empty string), so without this gate one verifier could accept a same-value-
+    # different-syntax scalar the other rejects (a dual-verifier equivalence break). Mirrors group.ts
+    # scalarFromDecimal exactly.
+    if not isinstance(s, str) or not re.fullmatch(r"0|[1-9][0-9]*", s):
+        raise ValueError("non-canonical scalar string")
+    x = int(s, 10)
+    if x >= L:
         raise ValueError("non-canonical scalar")
     return x
 
@@ -954,6 +970,75 @@ def verify_rla_export(j):
     return all(c[1] for c in checks), checks, None
 
 
+# ---- everlasting-privacy commitment trail (mirrors reference/src/everlasting.ts + proveConsistency) --
+def parse_consistency(j):
+    # parse_scalar enforces 0 <= x < L (mirrors the TS inRange hardening on zv, zr, zd).
+    return {"Aa": parse_point(j["Aa"]), "Ab": parse_point(j["Ab"]), "Ac": parse_point(j["Ac"]),
+            "zv": parse_scalar(j["zv"]), "zr": parse_scalar(j["zr"]), "zd": parse_scalar(j["zd"])}
+
+
+def parse_cell(j):
+    return {"ct": parse_ct(j), "bit": parse_bit(j["bit"]), "C": parse_point(j["C"]), "cons": parse_consistency(j["cons"])}
+
+
+def verify_consistency(pk, ct, C, p) -> bool:
+    """Proves C = v*G + d*H commits to the same v that (a,b) encrypts under pk (shared zv = cross-binding)."""
+    a, b = ct["a"], ct["b"]
+    e = hash_to_scalar("everlasting-consistency-v1", [G, H, pk, a, b, C, p["Aa"], p["Ab"], p["Ac"]])
+    if smul(G, p["zr"]) != padd(p["Aa"], smul(a, e)):  # a = r*G
+        return False
+    if padd(smul(G, p["zv"]), smul(pk, p["zr"])) != padd(p["Ab"], smul(b, e)):  # b = v*G + r*PK
+        return False
+    if padd(smul(G, p["zv"]), smul(H, p["zd"])) != padd(p["Ac"], smul(C, e)):  # C = v*G + d*H (same zv)
+        return False
+    return True
+
+
+def verify_everlasting_trail(j):
+    checks = []
+
+    def add(name, ok, detail=None):
+        checks.append((name, ok, detail))
+
+    add("Trail version/kind recognized", j.get("version") == "vvp-everlasting-trail-1" and j.get("kind") == "everlasting-trail")
+    # Fail closed: our independently-derived H must match the pinned NUMS constant AND the document's H.
+    h_ok = (H.hex() == PEDERSEN_H_HEX) and (j.get("pedersenH") == H.hex())
+    add("Pedersen generator H matches the pinned NUMS constant (fail closed)", h_ok)
+    if not h_ok:
+        return False, checks, None
+    # Structural gate mirrors the TS Array.isArray guards: candidates and ballots MUST be JSON arrays, so a
+    # string `candidates` (len matches K) or a dict `ballots` cannot be silently accepted here while TS rejects.
+    well_formed = isinstance(j.get("candidates"), list) and isinstance(j.get("ballots"), list)
+    add("Trail is well-formed (candidates and ballots are arrays)", well_formed)
+    if not well_formed:
+        return False, checks, None
+    pk = parse_point(j["publicKey"])
+    K = len(j["candidates"])
+    add("Candidate set is non-empty", K > 0)
+    if K == 0:
+        return False, checks, None
+    ballots = j["ballots"]
+    # Require cells to be a list (mirrors TS Array.isArray(b.cells)) so a non-array cells fails at this
+    # named shape check, exactly as TS does, rather than mid-parse downstream.
+    shape_ok = all(isinstance(b.get("cells"), list) and len(b["cells"]) == K for b in ballots)
+    add(f"Every ballot has exactly one commitment per candidate (K={K})", shape_ok)
+    if not shape_ok:
+        return False, checks, None
+    bit_bad = 0
+    cons_bad = 0
+    for b in ballots:
+        for cj in b["cells"]:
+            cell = parse_cell(cj)
+            if not verify_bit(pk, cell["ct"], cell["bit"]):
+                bit_bad += 1
+            if not verify_consistency(pk, cell["ct"], cell["C"], cell["cons"]):
+                cons_bad += 1
+    add("Every ciphertext is proven to encrypt a bit in {0,1} (disjunctive Chaum-Pedersen)", bit_bad == 0)
+    add("Every commitment is bound to the SAME vote as its ciphertext (consistency NIZK); combined with the bit-proof above, C therefore commits to a bit", cons_bad == 0)
+    add(f"Commitment trail is perfectly hiding by construction ({len(ballots) * K} commitments)", True)
+    return all(c[1] for c in checks), checks, None
+
+
 def main():
     if len(sys.argv) < 2:
         print("usage: python3 vvp_verify.py <transcript.json>", file=sys.stderr)
@@ -964,6 +1049,7 @@ def main():
         # the transcript's own `kind` field selects the verifier (default: plurality).
         kind = data.get("kind")
         verifier = (verify_rla_export if kind == "rla-export"
+                    else verify_everlasting_trail if kind == "everlasting-trail"
                     else verify_mixnet_irv if kind == "mixnet-irv"
                     else verify_ranked if kind == "ranked"
                     else verify)

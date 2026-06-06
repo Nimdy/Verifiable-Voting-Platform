@@ -25,6 +25,7 @@ import { runRankedElection, verifyRankedTranscript, type RankedVoter } from './r
 import { runMixnetElection, verifyMixnetTranscript, type MixnetVoter } from './mixnet-irv.js';
 import { makeManifest, buildAnchor, verifyAnchor, reportedResults, pollingExport, pollingExportToJSON, toArloManifestCsv, bravoSampleSize, bravoBallotPolling, representativeSample, type BatchRow } from './rla.js';
 import { AnchorLog, verifyAnchorLog, verifyRootAnchored, rootCommitment } from './anchorlog.js';
+import { buildTrail, verifyTrail, trailToJSON, commitVote, type EverlastingTrail } from './everlasting.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { verifyTranscript, type VerifyResult } from './verify.js';
 
@@ -256,17 +257,41 @@ console.log(`   Drop the latest entry → caught by the head pinned out-of-band:
 console.log(`   Present the log with NO validator allowlist → fails the accountability gate (self-asserted ≠ accountable): ${noRosterOk === false ? '🟢 YES' : '🔴 NO'}`);
 console.log('   ⚠ Anchoring gives tamper-evidence + ordering for the ROOT within a presented copy (the embedded time is signer-asserted, NOT verified against a trusted clock) — not fork/equivocation safety (needs gossip/witness cosigning), not trust in the tally (that is E2E-V + the verifiers), and not software independence (that is paper + RLA).\n');
 
+console.log('EVERLASTING / POST-QUANTUM PRIVACY (commitment-trail PRIMITIVE) — the building block for privacy that survives a future curve break:');
+line();
+// A perfectly-hiding Pedersen commitment trail, bound to the verifiable ballots by a consistency NIZK.
+const evTrail: EverlastingTrail = buildTrail(t.publicKey, t.contest, t.candidates, choices, t.boardRoot);
+const evOk = verifyTrail(evTrail).ok;
+// Perfect hiding: two commitments to the SAME vote are different, uniformly-distributed group elements.
+const cA = commitVote(1, randScalar());
+const cB = commitVote(1, randScalar());
+const hidingOk = !cA.equals(cB);
+// Tamper: replace one commitment with a fresh commitment to a DIFFERENT vote → the consistency NIZK rejects it.
+const evTampered: EverlastingTrail = {
+  ...evTrail,
+  ballots: evTrail.ballots.map((b, i) => (i === 0
+    ? { cells: b.cells.map((c, j) => (j === 0 ? { ...c, commitment: commitVote(0, randScalar()) } : c)) }
+    : b)),
+};
+const evTamperOk = verifyTrail(evTampered).ok;
+console.log(`   ${evTrail.ballots.length * t.candidates.length} perfectly-hiding commitments, each BOUND to its verifiable ballot by a consistency NIZK — trail verifies: ${evOk ? '🟢 YES' : '🔴 NO'}`);
+console.log(`   Same vote → different commitment (unconditionally hiding, even vs a quantum adversary): ${hidingOk ? '🟢 YES' : '🔴 NO'}`);
+console.log(`   Swap a commitment for one to a different vote → consistency NIZK rejects: ${evTamperOk === false ? '🟢 YES' : '🔴 NO'}`);
+console.log('   ⚠ This is the everlasting-privacy PRIMITIVE: the commitment trail is unconditionally private, but full everlasting privacy of a DEPLOYMENT needs the commitments to be the permanent record while the ciphertexts are EPHEMERAL tally material (Cuvelier–Pereira–Peters). As published here BOTH layers appear, so this artifact is only computationally private. It is post-quantum PRIVACY of the trail, NOT post-quantum integrity. See ADR-0010.\n');
+
 // Publish the transcripts so anyone can re-verify them from the public record alone.
 mkdirSync('out', { recursive: true });
 writeFileSync('out/transcript.json', transcriptToJSON(t));
 writeFileSync('out/ranked.json', rankedTranscriptToJSON(rkT));
 writeFileSync('out/mixnet-irv.json', mixnetIrvTranscriptToJSON(irvT));
 writeFileSync('out/rla-export.json', pollingExportToJSON(rlaExport));
+writeFileSync('out/everlasting-trail.json', trailToJSON(evTrail));
 console.log('Public transcripts written to reference/out/ — verify them yourself:');
-console.log('  npm run verify -- out/transcript.json   (plurality)');
-console.log('  npm run verify -- out/ranked.json        (ranked-choice Borda)');
-console.log('  npm run verify -- out/mixnet-irv.json    (ranked-choice IRV / mixnet)');
-console.log('  npm run verify -- out/rla-export.json    (paper + RLA hybrid anchor)\n');
+console.log('  npm run verify -- out/transcript.json        (plurality)');
+console.log('  npm run verify -- out/ranked.json            (ranked-choice Borda)');
+console.log('  npm run verify -- out/mixnet-irv.json        (ranked-choice IRV / mixnet)');
+console.log('  npm run verify -- out/rla-export.json        (paper + RLA hybrid anchor)');
+console.log('  npm run verify -- out/everlasting-trail.json (everlasting-privacy commitment trail)\n');
 
 line('━');
 console.log('  Summary: the honest election verifies; every insider attack is caught.');

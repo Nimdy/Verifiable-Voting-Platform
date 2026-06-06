@@ -2,7 +2,7 @@
 // for a formal audit — but it catches the obvious ways ZK proofs go wrong
 // (forgeable proofs, malleable proofs, wrong tallies). Run: npm run selftest
 
-import { G, N, ZERO, mod, mul, randScalar, scalarTo32, invMod, pointToHex, hashToScalar } from './group.js';
+import { G, H, N, ZERO, mod, mul, randScalar, scalarTo32, invMod, pointToHex, hashToScalar, scalarFromDecimal } from './group.js';
 import { Registrar } from './registrar.js';
 import {
   runStructuredElection, verifyStructured, validateSpec, type ElectionSpec, type StructuredVoter,
@@ -25,7 +25,7 @@ import {
 } from './mixnet-irv.js';
 import {
   proveBit, verifyBit, proveDecryption, verifyDecryption, proveSumOne, verifySumOne,
-  proveSumEqual, verifySumEqual,
+  proveSumEqual, verifySumEqual, proveConsistency, verifyConsistency,
 } from './proofs.js';
 import { issueCredential, sign, verifySig } from './credentials.js';
 import {
@@ -42,6 +42,10 @@ import {
 import {
   AnchorLog, verifyAnchorLog, verifyRootAnchored, rootCommitment, logHead, type AnchorEntry,
 } from './anchorlog.js';
+import {
+  commitVote, addCommitments, buildTrail, verifyTrail, trailToJSON, trailFromJSON, commitmentTotals,
+  type EverlastingTrail,
+} from './everlasting.js';
 import {
   transcriptToJSON, transcriptFromJSON, rankedTranscriptToJSON, rankedTranscriptFromJSON,
   mixnetIrvTranscriptToJSON, mixnetIrvTranscriptFromJSON,
@@ -870,6 +874,105 @@ for (let trial = 0; trial < 40; trial++) {
   const poison = { index: 0, prev: '', validatorPub: 'a'.repeat(64), sig: { R: 'a'.repeat(64), s: '1' }, get commitment() { throw new Error('boom'); } } as unknown as AnchorEntry;
   check(noThrow(() => verifyAnchorLog([poison], { validators: allow }).ok) === false, 'anchor log: verifyAnchorLog on a throwing-getter entry is rejected without throwing');
   check(noThrow(() => verifyRootAnchored([poison], 'a'.repeat(64), { validators: allow }).ok) === false, 'anchor log: verifyRootAnchored on a throwing-getter entry is rejected without throwing (round-15)');
+}
+
+// 24. Everlasting-privacy commitment trail (ADR-0010): a perfectly-hiding Pedersen commitment C = v·G + d·H
+//     per ballot, BOUND to the verifiable ElGamal ballot by a consistency NIZK. Hiding is unconditional;
+//     binding is computational. Honest verifies; every tamper (commitment, ciphertext, each response, each
+//     commitment-point, non-canonical scalar, wrong key, transplanted proof) is caught; the verifier never
+//     throws; H is the pinned NUMS generator; commitments are additively homomorphic.
+{
+  const noThrow = (fn: () => boolean): boolean | 'threw' => { try { return fn(); } catch { return 'threw'; } };
+  // H is the pinned nothing-up-my-sleeve generator, distinct from G and the identity.
+  check(pointToHex(H) === 'b66dc28b63ecfbb83fa33aad8148a54f17757fce571ad6b8df258d3cfa2a777a', 'everlasting: H matches the pinned NUMS constant');
+  check(!H.equals(G) && !H.equals(ZERO), 'everlasting: H differs from G and the identity');
+
+  // Perfect hiding: two commitments to the SAME vote with independent d are (overwhelmingly) different points.
+  let hidingDistinct = 0;
+  for (let i = 0; i < 50; i++) { if (!commitVote(1, randScalar()).equals(commitVote(1, randScalar()))) hidingDistinct++; }
+  check(hidingDistinct === 50, 'everlasting: commitments to the same vote are distinct (perfectly hiding)');
+  // A commitment to 0 and to 1 with the same d differ by exactly G (sanity: C(1,d) − C(0,d) == G).
+  { const d = randScalar(); check(commitVote(1, d).equals(commitVote(0, d).add(G)), 'everlasting: C(1,d) − C(0,d) == G (commitment opens correctly in the exponent)'); }
+
+  // Consistency NIZK: honest proofs verify for random (v, r, d); the cross-binding holds.
+  let consHonest = 0;
+  const pk = h; // trustees' joint key from the top of the file
+  for (let i = 0; i < 60; i++) {
+    const v: 0 | 1 = bit();
+    const r = randScalar(); const d = randScalar();
+    const ct = encrypt(pk, BigInt(v), r);
+    const C = commitVote(v, d);
+    if (verifyConsistency(pk, ct, C, proveConsistency(pk, ct, C, v, r, d))) consHonest++;
+  }
+  check(consHonest === 60, 'everlasting: honest consistency proofs verify over random (v,r,d)');
+
+  // Tamper battery on a single honest instance.
+  {
+    const v: 0 | 1 = 1; const r = randScalar(); const d = randScalar();
+    const ct = encrypt(pk, BigInt(v), r);
+    const C = commitVote(v, d);
+    const pr = proveConsistency(pk, ct, C, v, r, d);
+    check(verifyConsistency(pk, ct, C, pr), 'everlasting: baseline consistency proof verifies');
+    // commit to a DIFFERENT vote with the same proof → reject (binding)
+    check(verifyConsistency(pk, ct, commitVote(0, d), pr) === false, 'everlasting: a commitment to a different vote is rejected (binding)');
+    // commit to the same vote, different d (so C ≠ committed point in the proof) → reject
+    check(verifyConsistency(pk, ct, commitVote(v, randScalar()), pr) === false, 'everlasting: a re-randomized commitment not matching the proof is rejected');
+    // tamper each response → reject
+    check(verifyConsistency(pk, ct, C, { ...pr, zv: mod(pr.zv + 1n, N) }) === false, 'everlasting: tampering zv (the cross-binding response) is rejected');
+    check(verifyConsistency(pk, ct, C, { ...pr, zr: mod(pr.zr + 1n, N) }) === false, 'everlasting: tampering zr is rejected');
+    check(verifyConsistency(pk, ct, C, { ...pr, zd: mod(pr.zd + 1n, N) }) === false, 'everlasting: tampering zd is rejected');
+    // tamper each commitment point → reject
+    check(verifyConsistency(pk, ct, C, { ...pr, Aa: pr.Aa.add(G) }) === false, 'everlasting: tampering Aa is rejected');
+    check(verifyConsistency(pk, ct, C, { ...pr, Ab: pr.Ab.add(G) }) === false, 'everlasting: tampering Ab is rejected');
+    check(verifyConsistency(pk, ct, C, { ...pr, Ac: pr.Ac.add(H) }) === false, 'everlasting: tampering Ac is rejected');
+    // non-canonical scalar (≥ N) → reject (inRange hardening, mirrors verifyBit/verifyDecryption)
+    check(verifyConsistency(pk, ct, C, { ...pr, zv: N }) === false, 'everlasting: a non-canonical response scalar (= N) is rejected');
+    check(verifyConsistency(pk, ct, C, { ...pr, zr: N + 5n }) === false, 'everlasting: a non-canonical response scalar (> N) is rejected');
+    // wrong public key → reject (FS binds PK)
+    check(verifyConsistency(mul(G, randScalar()), ct, C, pr) === false, 'everlasting: a consistency proof under the wrong key is rejected');
+    // transplant the proof onto a DIFFERENT ciphertext (same v) → reject (FS binds a,b)
+    const ct2 = encrypt(pk, BigInt(v), randScalar());
+    check(verifyConsistency(pk, ct2, C, pr) === false, 'everlasting: a proof transplanted to a different ciphertext is rejected');
+  }
+
+  // Additively homomorphic: Σ commitments = (Σv)·G + (Σd)·H.
+  {
+    const vs: (0 | 1)[] = [1, 0, 1, 1, 0];
+    const ds = vs.map(() => randScalar());
+    const Cs = vs.map((v, i) => commitVote(v, ds[i]!));
+    const sumV = vs.reduce((a, v) => a + BigInt(v), 0n);
+    const sumD = ds.reduce((a, d) => mod(a + d, N), 0n);
+    check(addCommitments(Cs).equals(mul(G, sumV).add(mul(H, sumD))), 'everlasting: Σ commitments opens to (Σv)·G + (Σd)·H (homomorphic)');
+  }
+
+  // Trail-level: honest trail verifies (object + JSON round-trip); tamper rejected; never-throws.
+  const trail: EverlastingTrail = buildTrail(h, 'Chair', ['A', 'B', 'C'], [0, 1, 2, 0, 1], 'a'.repeat(64));
+  check(verifyTrail(trail).ok, 'everlasting: an honest trail verifies');
+  check(verifyTrail(trailFromJSON(trailToJSON(trail))).ok, 'everlasting: a trail survives a JSON round-trip');
+  check(commitmentTotals(trail).length === 3, 'everlasting: per-candidate commitment totals are produced (homomorphic tally commitment)');
+  // tamper a commitment in the trail → reject
+  const tt: EverlastingTrail = { ...trail, ballots: trail.ballots.map((b, i) => (i === 0 ? { cells: b.cells.map((c, j) => (j === 0 ? { ...c, commitment: commitVote(1, randScalar()) } : c)) } : b)) };
+  check(verifyTrail(tt).ok === false, 'everlasting: a tampered trail commitment is rejected');
+  // a trail whose document H is wrong must fail to parse (fail closed)
+  check(noThrow(() => trailFromJSON(trailToJSON(trail).replace(/"pedersenH":"[0-9a-f]{64}"/, '"pedersenH":"' + 'f'.repeat(64) + '"')) && true) === 'threw', 'everlasting: a trail with a wrong pinned H fails closed on parse');
+  // strict canonical-decimal scalar parsing (round-16): the SAME-VALUE-different-syntax forms that JS
+  // BigInt() or Python int() would each accept must be a clean rejection in BOTH verifiers (no divergence).
+  check(scalarFromDecimal('123') === 123n && scalarFromDecimal('0') === 0n, 'everlasting: scalarFromDecimal accepts canonical decimal');
+  for (const bad of ['0x10', '1_0', '', ' 5', '5 ', '-1', '00', '01', '٥', '1e3', '0b1', '+7']) {
+    check(noThrow(() => { scalarFromDecimal(bad); return true; }) === 'threw', `everlasting: scalarFromDecimal rejects non-canonical "${bad}"`);
+  }
+  // end-to-end: a trail whose scalar is rewritten to a non-canonical (hex) form fails to parse (mirrors Python int()).
+  {
+    const tj = trailToJSON(buildTrail(h, 'X', ['A', 'B'], [0, 1]));
+    const m = tj.match(/"zv":"(\d+)"/);
+    const hexForm = tj.replace('"zv":"' + m![1]! + '"', '"zv":"0x' + BigInt(m![1]!).toString(16) + '"');
+    check(noThrow(() => { trailFromJSON(hexForm); return true; }) === 'threw', 'everlasting: a hex-rewritten scalar in a trail is rejected on parse (cross-verifier equivalence)');
+  }
+
+  // robustness: malformed trails are a clean rejection, not an exception
+  check(noThrow(() => verifyTrail(null as unknown as EverlastingTrail).ok) === false, 'everlasting: verifyTrail on null is rejected without throwing');
+  check(noThrow(() => verifyTrail({ contest: 'x', candidates: [], publicKey: h, ballots: [] } as EverlastingTrail).ok) === false, 'everlasting: verifyTrail on an empty candidate set is rejected without throwing');
+  check(noThrow(() => verifyTrail({ ...trail, ballots: [{ cells: [] }] } as EverlastingTrail).ok) === false, 'everlasting: verifyTrail on a wrong-shape ballot is rejected without throwing');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);

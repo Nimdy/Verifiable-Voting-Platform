@@ -30,7 +30,7 @@
 
 import { sha256 } from '@noble/hashes/sha256';
 import { concatBytes, utf8ToBytes, hexToBytes, bytesToHex } from '@noble/hashes/utils';
-import { pointToHex, pointFromHex } from './group.js';
+import { pointToHex, pointFromHex, scalarFromDecimal } from './group.js';
 import { sign, verifySig, type Credential } from './credentials.js';
 import type { Check, VerifyResult } from './verify.js';
 
@@ -169,7 +169,7 @@ export function verifyAnchorLog(
     let sigBad = 0;
     let unpinned = 0;
     for (const e of entries) {
-      if (!verifySig(pointFromHex(e.validatorPub), entrySignedBytes(e.index, e.prev, e.commitment, e.validatorPub), { R: pointFromHex(e.sig.R), s: BigInt(e.sig.s) })) sigBad++;
+      if (!verifySig(pointFromHex(e.validatorPub), entrySignedBytes(e.index, e.prev, e.commitment, e.validatorPub), { R: pointFromHex(e.sig.R), s: scalarFromDecimal(e.sig.s) })) sigBad++;
       if (allow && !allow.has(e.validatorPub)) unpinned++;
     }
     checks.push({ name: 'Every entry is signed by its named validator', ok: sigBad === 0 });

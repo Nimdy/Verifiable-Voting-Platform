@@ -17,4 +17,5 @@ export * from './mixnet.js';
 export * from './mixnet-irv.js';
 export * from './rla.js';
 export * from './anchorlog.js';
+export * from './everlasting.js';
 export * from './transcript-json.js';

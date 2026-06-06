@@ -4,7 +4,7 @@
 
 ## Status — what is fixed vs open (read this first)
 
-This file accumulates **15 review rounds in reverse-chronological order**. Each round's text is preserved
+This file accumulates **16 review rounds in reverse-chronological order**. Each round's text is preserved
 verbatim *in the voice of when it was written* — so a finding described in the present tense below may have
 been **fixed in that same round**. Don't read a historical finding as a live defect; check this Status.
 
@@ -27,6 +27,16 @@ been **fixed in that same round**. Don't read a historical finding as a live def
   verifier does not check** (the seam gives order, not trusted time); and `verifyRootAnchored` now honours the
   never-throws contract even against a throwing accessor. Regression-locked by `selftest.ts` §23.
 
+**Everlasting / post-quantum PRIVACY (round 16) — primitive shipped, honestly scoped.** A perfectly-hiding
+Pedersen commitment trail (`everlasting.ts`, [ADR-0010](ADRs/ADR-0010-everlasting-post-quantum-privacy-via-perfectly-hiding-pedersen.md))
+bound to each verifiable ballot by a consistency NIZK closes the harvest-now-decrypt-later privacy gap: the
+commitment trail stays private even against a future adversary who breaks the curve. It is **privacy-only**
+(integrity stays classical) and ships as the *primitive* (a fully everlasting-private *deployment* needs the
+ephemeral-ciphertext discipline + an everlasting bit/range proof on the commitment — both recorded as gates
+in ADR-0010). Held to the two-verifier bar (TS + Python, byte-identical NUMS generator) and a 15-case
+divergence battery; the round-16 review's 3 findings (a `BigInt()`/`int()` scalar-syntax divergence affecting
+**all** transcript kinds, a Python non-array `candidates` accept, and a misleading check label) are all fixed.
+
 **Open items are explicitly scoped, not live defects:** distributed DKG *ceremony* tooling, byte-level
 deserialization validation at a networked boundary, and production hardening — all tracked in
 [ROADMAP.md](ROADMAP.md)/[SCOPE.md](SCOPE.md) (M1/M3/M7). The eligibility/identity-binding gap flagged in the
@@ -35,6 +45,18 @@ early protocol round is itself now implemented (Belenios-style credentials + sin
 ## Verdict
 
 The core ZK/tally machinery is cryptographically sound for its stated stage-1 scope, with one genuine exception in the commitment layer. I independently re-read all of src/ and empirically reproduced the load-bearing claims against the running code (Node 24, @noble/curves 1.9.7). The three Sigma protocols are correctly built and correctly applied: the disjunctive Chaum-Pedersen 0/1 proof and the Chaum-Pedersen decryption-share proof both use strong Fiat-Shamir (the bit challenge binds h, a, and b; the decryption challenge binds G, a, pub, share, plus all commitments), so there is NO frozen-heart / weak-FS hole; the c0+c1==H(...) sub-challenge binding is the real soundness gate and it holds (an m=2 ciphertext cannot be passed off as a bit; cross-key, cross-ciphertext, and cross-trustee replays all fail). Exponential ElGamal, the additive-homomorphic fold, and additive N-of-N decryption are mathematically correct (b - Sigma a^{x_i} = g^{Sigma m}), and serializeBallot is a canonical injective fixed-width 320-byte record. The single thing that breaks the system's own stated property at PoC stage is the bulletin board's Merkle construction: it duplicates the last node on odd levels (the classic CVE-2012-2459 pattern), so [A,B,C] and [A,B,C,C] hash to an identical root (confirmed byte-identical: 570cc377...). That defeats the root's only job — uniquely committing to the ordered ballot multiset — and enables vote injection/deletion against any externally anchored root, which is the explicitly stated production design. Everything else the auditors flagged is either a defense-in-depth nicety or an EXPECTED stage-1 scope gap (no eligibility/nullifier/identity binding, N-of-N instead of k-of-n, no point/scalar validation at a not-yet-existent deserialization boundary). Bottom line: the proof math is right and the tally is honestly verifiable within scope; fix the Merkle malleability before relying on the root, and treat the missing eligibility/identity layer as the non-negotiable prerequisite before any real use.
+
+## Round 16 — everlasting / post-quantum privacy primitive (design panel + adversarial review): 3 findings, all fixed
+
+Reviewed the new everlasting-privacy layer (`reference/src/everlasting.ts`, `proveConsistency`/`verifyConsistency` in `proofs.ts`, the NUMS generator `H` in `group.ts`, the Python `verify_everlasting_trail`, and [ADR-0010](ADRs/ADR-0010-everlasting-post-quantum-privacy-via-perfectly-hiding-pedersen.md)). The construction: alongside each ElGamal ballot ciphertext, a **perfectly-hiding Pedersen commitment** `C = v·G + d·H` (H a nothing-up-my-sleeve generator with unknown dlog), plus a **generalized-Schnorr consistency NIZK** binding `C` to the same `v` the ciphertext encrypts (single shared response = the cross-binding). It closes the **harvest-now-decrypt-later** gap: the commitment trail stays private even against a future adversary who breaks the curve.
+
+This went through a **pre-implementation design panel** (three independent cryptographers; unanimous *sound-with-changes*, all changes folded in: `inRange` on every response, recomputed challenge, full FS binding `[G,H,PK,a,b,C,A_a,A_b,A_C]`, the RFC-9496 one-way map for `H`, keep a separate `C` under `H` rather than reusing `b` under `PK`) followed by a **post-implementation multi-agent adversarial review** (five skeptic lenses — soundness, cross-language, privacy-leak, robustness, over-claim — each finding adversarially verified). The core math survived unbroken: the consistency proof is special-sound and HVZK, `H` is byte-identical across `@noble` and libsodium, and the perfect-hiding of `C` is preserved by the (simulatable) proof. **3 findings confirmed, all fixed.**
+
+- **HIGH (fixed) — `BigInt()`/`int()` scalar-syntax divergence (dual-verifier equivalence break).** The TS and Python codecs parsed scalar strings with each language's *native* numeric constructor, which accept **different** non-canonical forms: `BigInt("0x…")` is accepted by TS but rejected by Python; `int("12_34")` (underscores) / Unicode digits are accepted by Python but rejected by TS. So an attacker could rewrite one scalar in an honest, fully-verifying document into a same-value-different-syntax form and make the **two independent trust roots return opposite verdicts** on a byte-identical file — defeating the entire reason the second verifier exists. This was latent in **every** transcript kind (the shared codec), not just the new one. **Fix:** a strict canonical-decimal gate (`group.ts scalarFromDecimal`, mirrored in Python `parse_scalar` via `re.fullmatch(r"0|[1-9][0-9]*")`) applied across `transcript-json.ts`, `everlasting.ts`, `rla.ts`, and `anchorlog.ts`; a same-value-different-syntax scalar is now a clean rejection in **both**. Regression-locked (selftest §24: `0x..`, `1_0`, empty, whitespace, Unicode digit, leading-zero, signs).
+- **MEDIUM (fixed) — Python accepted a non-array `candidates` that TS rejected.** `verify_everlasting_trail` computed `len(j["candidates"])` with no type check, so a document with `"candidates":"AB"` (a 2-char string, `len==K`) verified in Python but was rejected by the TS `Array.isArray` guard — another byte-identical-document verdict split. **Fix:** the Python verifier now requires `candidates` and `ballots` to be arrays, mirroring TS.
+- **LOW (fixed) — check label over-claimed bit-ness.** Both verifiers printed "consistency NIZK ⇒ C commits to a bit", which is exactly ADR-0010's must-not-claim #3 (the consistency proof proves *same-v*; bit-ness comes from the disjunctive bit-proof on `(a,b)`). **Fix:** relabelled to attribute bit-ness to the bit-proof, not the consistency NIZK. (Two further NITs the panel refuted were addressed anyway for precision: "perfectly hiding" is annotated as statistically hiding within `< 2^-256` of the sampler bias; the demo banner now says "commitment-trail PRIMITIVE".)
+
+Held to the two-verifier bar: a 15-case **cross-language divergence battery** (honest control + commitment/ciphertext/each-response/each-commitment-point tamper, non-canonical scalar, swapped proof, wrong pinned `H`, dropped cell, invalid point) shows the honest trail VERIFIES in both and every tamper is REJECTED by both, **zero divergence**; CI re-verifies `out/everlasting-trail.json` with the TS CLI and Python on every push. The honest scope is enforced in the code header, the verifier check labels, the demo copy, and ADR-0010: this is post-quantum **privacy** of the commitment trail, **not** post-quantum integrity, and the published demo artifact (both layers present) is only computationally private.
 
 ## Round 15 — second adversarial pass on the chain-anchor diff (multi-agent): 2 findings, both fixed
 

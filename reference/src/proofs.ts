@@ -12,7 +12,7 @@
 //
 // Both are made non-interactive with the Fiat–Shamir transform.
 
-import { G, N, mod, mul, randScalar, hashToScalar, inRange, type Point } from './group.js';
+import { G, H, N, mod, mul, randScalar, hashToScalar, inRange, type Point } from './group.js';
 import type { Ciphertext } from './elgamal.js';
 
 // ---------------------------------------------------------------------------
@@ -168,3 +168,66 @@ export function verifySumEqual(h: Point, agg: Ciphertext, p: SumProof, L: number
 /** Exactly-one is the L=1 special case (plurality / single-choice). */
 export const proveSumOne = (h: Point, agg: Ciphertext, R: bigint): SumProof => proveSumEqual(h, agg, R, 1);
 export const verifySumOne = (h: Point, agg: Ciphertext, p: SumProof): boolean => verifySumEqual(h, agg, p, 1);
+
+// ---------------------------------------------------------------------------
+// 4. ElGamal↔Pedersen consistency (the everlasting-privacy binding).
+//
+//    Proves knowledge of (v, r, d) such that, SIMULTANEOUSLY:
+//        a = r·G                      (ElGamal: the randomness commitment)
+//        b = v·G + r·PK               (ElGamal: encrypts v under joint key PK)
+//        C = v·G + d·H                (Pedersen: perfectly-hiding commitment to v)
+//    i.e. the perfectly-hiding commitment C and the verifiable ciphertext (a,b) encode the SAME v.
+//
+//    This is a generalized-Schnorr / Maurer linear-relation proof for the homomorphism
+//    φ(v,r,d) = (r·G, v·G + r·PK, v·G + d·H). The SINGLE shared response `zv` across the b-equation
+//    and the C-equation is the entire cross-binding — it forces the same v in both. Combined with the
+//    disjunctive bit-proof on (a,b) (§1), it follows that C commits to a value in {0,1}.
+//
+//    SCOPE: this binds C to the verifiable ballot (computational soundness under unknown dlog_G(H));
+//    the everlasting/UNCONDITIONAL property is the *hiding* of C, not this proof. The proof is HVZK,
+//    so publishing it leaks nothing about (v,r,d) and does not weaken C's perfect hiding.
+// ---------------------------------------------------------------------------
+
+export interface ConsistencyProof {
+  Aa: Point; // kr·G
+  Ab: Point; // kv·G + kr·PK
+  Ac: Point; // kv·G + kd·H
+  zv: bigint; // kv + e·v   (the SHARED response — binds the same v in b and C)
+  zr: bigint; // kr + e·r
+  zd: bigint; // kd + e·d
+}
+
+const CONSISTENCY_LABEL = 'everlasting-consistency-v1';
+
+/** Prove the Pedersen commitment C = v·G + d·H commits to the same v that (a,b) encrypts under pk. */
+export function proveConsistency(pk: Point, ct: Ciphertext, C: Point, v: 0 | 1, r: bigint, d: bigint): ConsistencyProof {
+  const { a, b } = ct;
+  const kv = randScalar();
+  const kr = randScalar();
+  const kd = randScalar();
+  const Aa = mul(G, kr);
+  const Ab = mul(G, kv).add(mul(pk, kr));
+  const Ac = mul(G, kv).add(mul(H, kd));
+  const e = hashToScalar(CONSISTENCY_LABEL, [G, H, pk, a, b, C, Aa, Ab, Ac]);
+  return {
+    Aa, Ab, Ac,
+    zv: mod(kv + e * BigInt(v), N),
+    zr: mod(kr + e * r, N),
+    zd: mod(kd + e * d, N),
+  };
+}
+
+/** Verify the ElGamal↔Pedersen consistency proof. Never trusts a transmitted challenge; recomputes e. */
+export function verifyConsistency(pk: Point, ct: Ciphertext, C: Point, p: ConsistencyProof): boolean {
+  const { a, b } = ct;
+  // Reject non-canonical scalar encodings (≥ N) so the proof object is not malleable (audit hardening).
+  if (![p.zv, p.zr, p.zd].every(inRange)) return false;
+  const e = hashToScalar(CONSISTENCY_LABEL, [G, H, pk, a, b, C, p.Aa, p.Ab, p.Ac]);
+  // a = r·G            :  zr·G == Aa + e·a
+  if (!mul(G, p.zr).equals(p.Aa.add(mul(a, e)))) return false;
+  // b = v·G + r·PK     :  zv·G + zr·PK == Ab + e·b
+  if (!mul(G, p.zv).add(mul(pk, p.zr)).equals(p.Ab.add(mul(b, e)))) return false;
+  // C = v·G + d·H      :  zv·G + zd·H == Ac + e·C   (SAME zv ⇒ same v as in b)
+  if (!mul(G, p.zv).add(mul(H, p.zd)).equals(p.Ac.add(mul(C, e)))) return false;
+  return true;
+}
