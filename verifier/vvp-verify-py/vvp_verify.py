@@ -8,8 +8,8 @@ TypeScript reference verifier on every transcript, a single-implementation bug i
 either is far less likely to hide. It re-derives everything from the public record
 alone and trusts nothing about who produced it.
 
-Handles both transcript kinds — plurality/multi-seat and ranked-choice (Borda) —
-dispatching on the transcript's own `kind` field.
+Handles all three transcript kinds — plurality/multi-seat, ranked-choice (Borda),
+and ranked-choice IRV (mixnet) — dispatching on the transcript's own `kind` field.
 
     python3 vvp_verify.py <transcript.json>      # exit 0 = VERIFIED, 1 = REJECTED, 2 = usage
 
@@ -24,6 +24,7 @@ import pysodium
 # ristretto255 scalar-field (prime) order.
 L = 2**252 + 27742317777372353535851937790883648493
 ZERO = b"\x00" * 32  # canonical encoding of the ristretto identity element
+SECURITY_T = 128  # mixnet shuffle Fiat-Shamir floor (mirrors reference/src/mixnet.ts)
 
 
 # ---- group / scalar helpers (mirrors reference/src/group.ts) ----------------
@@ -563,6 +564,324 @@ def verify_ranked(j):
     return ok, checks, (results if tally_bad == 0 else None)
 
 
+# ---- mixnet instant-runoff (IRV); mirrors reference/src/mixnet-irv.ts + mixnet.ts -----------
+def reenc_item(pk, item, factors):
+    return [{"a": padd(item[w]["a"], smul(G, factors[w])), "b": padd(item[w]["b"], smul(pk, factors[w]))}
+            for w in range(len(item))]
+
+
+def apply_perm(src, perm):
+    return [src[pi] for pi in perm]  # output[i] = src[perm[i]]
+
+
+def is_permutation(perm, n) -> bool:
+    if not isinstance(perm, list) or len(perm) != n:
+        return False
+    seen = [False] * n
+    for v in perm:
+        if not isinstance(v, int) or isinstance(v, bool) or v < 0 or v >= n or seen[v]:
+            return False
+        seen[v] = True
+    return True
+
+
+def flat_items(items):  # [a, b, a, b, ...] in item-then-component-then-(a,b) order
+    out = []
+    for it in items:
+        for ct in it:
+            out.append(ct["a"]); out.append(ct["b"])
+    return out
+
+
+def shuffle_challenge_bits(pk, L0, L, intermediates, t):
+    pts = [pk] + flat_items(L0) + flat_items(L)
+    for M in intermediates:
+        pts += flat_items(M)
+    c = scalar_be(hash_to_scalar("mixnet-shuffle", pts))  # 32-byte big-endian, mirrors scalarTo32(hashToScalar(...))
+    bits = []
+    block = -1
+    digest = b""
+    for j in range(t):
+        b = j // 512
+        if b != block:
+            block = b
+            digest = hashlib.sha512(b"vvp-fs-v1" + b"mixnet-shuffle-bits" + c + u32(b)).digest()
+        idx = j % 512
+        bits.append((digest[idx >> 3] >> (idx & 7)) & 1)
+    return bits
+
+
+def verify_shuffle(pk, L0, L, proof) -> bool:
+    t = proof["t"]
+    if not (isinstance(t, int) and not isinstance(t, bool) and t >= SECURITY_T):
+        return False
+    n = len(L0)
+    if not (len(proof["intermediates"]) == t and len(proof["openings"]) == t and n >= 1 and len(L) == n):
+        return False
+    W = len(L0[0])
+    if W < 1 or any(len(it) != W for it in L0) or any(len(it) != W for it in L):
+        return False
+    for M in proof["intermediates"]:
+        if len(M) != n or any(len(it) != W for it in M):
+            return False
+    for op in proof["openings"]:
+        if len(op["perm"]) != n or len(op["factors"]) != n or any(len(f) != W for f in op["factors"]):
+            return False
+    for op in proof["openings"]:  # canonical scalars already enforced by parse_scalar; check bijection
+        if not is_permutation(op["perm"], n):
+            return False
+    bits = shuffle_challenge_bits(pk, L0, L, proof["intermediates"], t)
+    for j in range(t):
+        M = proof["intermediates"][j]
+        op = proof["openings"][j]
+        src = L0 if bits[j] == 0 else M  # bit 0 opens L0->M_j; bit 1 opens M_j->L
+        dst = M if bits[j] == 0 else L
+        permuted = apply_perm(src, op["perm"])
+        for i in range(n):
+            cand = reenc_item(pk, permuted[i], op["factors"][i])
+            d = dst[i]
+            for wi in range(W):
+                if cand[wi]["a"] != d[wi]["a"] or cand[wi]["b"] != d[wi]["b"]:
+                    return False
+    return True
+
+
+def ballot_to_ranks(matrix, K):
+    if len(matrix) != K:
+        return None
+    rank_of = [0] * K
+    col_used = [False] * K
+    for i in range(K):
+        row = matrix[i]
+        if len(row) != K:
+            return None
+        ones = 0
+        col = -1
+        for r in range(K):
+            v = row[r]
+            if v != 0 and v != 1:
+                return None
+            if v == 1:
+                ones += 1
+                col = r
+        if ones != 1 or col_used[col]:
+            return None
+        col_used[col] = True
+        rank_of[i] = col
+    return rank_of
+
+
+def entry_idx(item, i, r, K):
+    return ((item * K) + i) * K + r
+
+
+def flatten_ballot(b):  # b = parsed ranked ballot {'matrix': [[ct...]...]}
+    K = len(b["matrix"])
+    return [b["matrix"][i][r] for i in range(K) for r in range(K)]
+
+
+def tabulate_irv(decrypted, K):
+    rank_matrix = []
+    for b in range(len(decrypted)):
+        ranks = ballot_to_ranks(decrypted[b], K)
+        if ranks is None:
+            return {"error": f"ballot {b} is not a permutation matrix"}
+        rank_matrix.append(ranks)
+    n = len(rank_matrix)
+    eliminated = [False] * K
+    rounds = []
+    alive = K
+    for rnd in range(K):
+        elim_snap = sorted([c for c in range(K) if eliminated[c]])
+        tally = [0] * K
+        for rank_of in rank_matrix:
+            best = -1
+            best_rank = K
+            for c in range(K):
+                if not eliminated[c] and rank_of[c] < best_rank:
+                    best_rank = rank_of[c]
+                    best = c
+            tally[best] += 1
+        if sum(tally) != n:
+            return {"error": f"round {rnd}: active total != n"}
+        winner = -1
+        for c in range(K):
+            if not eliminated[c] and 2 * tally[c] > n:
+                winner = c
+                break
+        if winner != -1 or alive == 1:
+            if winner == -1:
+                for c in range(K):
+                    if not eliminated[c]:
+                        winner = c
+                        break
+            rounds.append({"eliminated": elim_snap, "tallies": tally, "eliminatedThisRound": None, "winner": winner})
+            return {"rounds": rounds, "winner": winner}
+        mn = min(tally[c] for c in range(K) if not eliminated[c])
+        victim = -1
+        for c in range(K):  # ascending scan + overwrite => HIGHEST index among the minimizers
+            if not eliminated[c] and tally[c] == mn:
+                victim = c
+        rounds.append({"eliminated": elim_snap, "tallies": tally, "eliminatedThisRound": victim, "winner": None})
+        eliminated[victim] = True
+        alive -= 1
+    return {"error": "IRV did not terminate within K rounds"}
+
+
+def verify_mixnet_irv(j):
+    checks = []
+
+    def add(name, ok, detail=None):
+        checks.append((name, ok, detail))
+
+    candidates = j["candidates"]
+    K = len(candidates)
+    k = j["threshold"]
+    n = len(j["ballots"])
+    W = K * K
+    nkk = n * K * K
+
+    def idx_ok(i):
+        return isinstance(i, int) and not isinstance(i, bool) and 1 <= i <= j["trustees"]
+
+    shape_ok = (
+        K > 0 and isinstance(k, int) and k >= 1 and isinstance(j["trustees"], int) and j["trustees"] >= k
+        and len(j["commitments"]) == k and isinstance(j["numVoters"], int) and j["numVoters"] == n and n >= 1
+        and all(len(b["ballot"]["matrix"]) == K and all(len(row) == K for row in b["ballot"]["matrix"])
+                and len(b["ballot"]["bitProofs"]) == K and all(len(row) == K for row in b["ballot"]["bitProofs"])
+                and len(b["ballot"]["rowSums"]) == K and len(b["ballot"]["colSums"]) == K for b in j["ballots"])
+        and isinstance(j["shuffled"], list) and len(j["shuffled"]) == n and all(len(it) == W for it in j["shuffled"])
+        and isinstance(j["decShares"], list)
+        and all(len(ds["shares"]) == nkk and len(ds["proofs"]) == nkk for ds in j["decShares"])
+        and isinstance(j["decryptedMatrices"], list) and len(j["decryptedMatrices"]) == n
+        and all(len(M) == K and all(len(row) == K and all(v in (0, 1) for v in row) for row in M) for M in j["decryptedMatrices"])
+        and isinstance(j["rounds"], list) and len(j["rounds"]) >= 1
+        and isinstance(j["winner"], int) and 0 <= j["winner"] < K
+    )
+    add("Transcript shape: KxK ballots, n items width K^2, n*K^2 shares, well-formed rounds", shape_ok)
+    if not shape_ok:
+        return False, checks, None
+
+    commitments = [parse_point(c) for c in j["commitments"]]
+    public_key = parse_point(j["publicKey"])
+    eligible = {parse_point(c) for c in j["eligibleRoll"]}
+    ctx = election_context(j["contest"], public_key, candidates)
+    ballots = [{
+        "voter": b["voter"], "credentialPub": parse_point(b["credentialPub"]),
+        "ballot": parse_ranked_ballot(b["ballot"]),
+        "sig": {"R": parse_point(b["sig"]["R"]), "s": parse_scalar(b["sig"]["s"])},
+    } for b in j["ballots"]]
+    shuffled = [[parse_ct(c) for c in it] for it in j["shuffled"]]
+    proof = {
+        "t": j["shuffleProof"]["t"],
+        "intermediates": [[[parse_ct(c) for c in it] for it in M] for M in j["shuffleProof"]["intermediates"]],
+        "openings": [{"perm": op["perm"], "factors": [[parse_scalar(x) for x in f] for f in op["factors"]]}
+                     for op in j["shuffleProof"]["openings"]],
+    }
+    dec_shares = [{
+        "trusteeIndex": ds["trusteeIndex"],
+        "shares": [parse_point(s) for s in ds["shares"]],
+        "proofs": [parse_dec(p) for p in ds["proofs"]],
+    } for ds in j["decShares"]]
+
+    add("Joint public key = commitment C0 (threshold key)", commitments[0] == public_key)
+
+    root = mth([ranked_board_bytes(ctx, b["credentialPub"], b["ballot"], b["sig"]) for b in ballots]).hex()
+    add("Bulletin-board Merkle root matches the published ballots", root == j["boardRoot"])
+
+    add("Eligible roll has no duplicate credentials", len(eligible) == len(j["eligibleRoll"]))
+    seen = set()
+    inelig = bad_sig = dup = 0
+    for b in ballots:
+        key = b["credentialPub"]
+        if key not in eligible:
+            inelig += 1
+        if not verify_sig(b["credentialPub"], ranked_signing_bytes(ctx, b["ballot"]), b["sig"]):
+            bad_sig += 1
+        if key in seen:
+            dup += 1
+        seen.add(key)
+    add("Every ballot is signed by an eligible voter credential", inelig == 0 and bad_sig == 0,
+        f"{inelig} ineligible, {bad_sig} bad sig" if (inelig or bad_sig) else None)
+    add("No credential voted more than once (single-use nullifier)", dup == 0)
+
+    invalid = sum(0 if verify_ranking_valid(public_key, b["ballot"]) else 1 for b in ballots)
+    add("Every ballot is a valid strict ranking (permutation matrix)", invalid == 0)
+
+    # RE-DERIVE L0 from the validated ballots (never trust a published L0) + verify the shuffle
+    l0 = [flatten_ballot(b["ballot"]) for b in ballots]
+    add("Shuffle proof meets the SECURITY_T floor", isinstance(proof["t"], int) and proof["t"] >= SECURITY_T)
+    add("Shuffle is a proven re-encryption permutation of the board ballots (L0 re-derived)",
+        verify_shuffle(public_key, l0, shuffled, proof))
+
+    indices = [d["trusteeIndex"] for d in dec_shares]
+    add(f"Decryption quorum: >= {k} distinct registered trustees (1..{j['trustees']})",
+        len(set(indices)) == len(indices) and all(idx_ok(i) for i in indices) and len(dec_shares) >= k)
+    bad_shares = 0
+    for ds in dec_shares:
+        if not idx_ok(ds["trusteeIndex"]):
+            bad_shares += nkk
+            continue
+        pub = verification_key_at(commitments, ds["trusteeIndex"])
+        for item in range(n):
+            for i in range(K):
+                for r in range(K):
+                    a = shuffled[item][i * K + r]["a"]
+                    ix = entry_idx(item, i, r, K)
+                    if not verify_decryption(a, pub, ds["shares"][ix], ds["proofs"][ix]):
+                        bad_shares += 1
+    add("Every trustee decryption share is provably honest", bad_shares == 0)
+
+    valid = [ds for ds in dec_shares if idx_ok(ds["trusteeIndex"])]
+    recovered = []
+    recover_bad = field_mismatch = 0
+    for item in range(n):
+        M = []
+        for i in range(K):
+            row = []
+            for r in range(K):
+                ix = entry_idx(item, i, r, K)
+                combined = combine_shares([(ds["trusteeIndex"], ds["shares"][ix]) for ds in valid])
+                m = discrete_log(psub(shuffled[item][i * K + r]["b"], combined), 1)
+                if m is None:
+                    recover_bad += 1
+                    m = -1
+                row.append(m)
+                if m != j["decryptedMatrices"][item][i][r]:
+                    field_mismatch += 1
+            M.append(row)
+        recovered.append(M)
+    add("Recovered entries match the published decrypted matrices", recover_bad == 0 and field_mismatch == 0)
+    non_perm = 0
+    for M in recovered:
+        for i in range(K):
+            if sum(M[i][r] for r in range(K)) != 1:
+                non_perm += 1
+        for r in range(K):
+            if sum(M[i][r] for i in range(K)) != 1:
+                non_perm += 1
+    add("Every recovered matrix is a permutation (every row & column sums to 1)", non_perm == 0)
+
+    out = tabulate_irv(recovered, K)
+    irv_ok = False
+    round0 = None
+    if "error" not in out:
+        same = (
+            len(out["rounds"]) == len(j["rounds"])
+            and all(R["eliminated"] == T["eliminated"] and R["tallies"] == T["tallies"]
+                    and R["eliminatedThisRound"] == T["eliminatedThisRound"] and R["winner"] == T["winner"]
+                    for R, T in zip(out["rounds"], j["rounds"]))
+            and out["winner"] == j["winner"]
+        )
+        irv_ok = recover_bad == 0 and non_perm == 0 and same
+        if irv_ok:
+            round0 = list(out["rounds"][0]["tallies"])
+    add("IRV tabulation is correct and deterministic (recomputed over recovered matrices)", irv_ok)
+
+    ok = all(c[1] for c in checks)
+    return ok, checks, (round0 if ok else None)
+
+
 def main():
     if len(sys.argv) < 2:
         print("usage: python3 vvp_verify.py <transcript.json>", file=sys.stderr)
@@ -571,7 +890,8 @@ def main():
         with open(sys.argv[1]) as f:
             data = json.load(f)
         # the transcript's own `kind` field selects the verifier (default: plurality).
-        verifier = verify_ranked if data.get("kind") == "ranked" else verify
+        kind = data.get("kind")
+        verifier = verify_mixnet_irv if kind == "mixnet-irv" else verify_ranked if kind == "ranked" else verify
         ok, checks, results = verifier(data)
     except Exception as e:  # the trust root always emits a verdict
         print(f"❌ could not parse/verify: {e}")

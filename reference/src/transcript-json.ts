@@ -6,16 +6,18 @@
 // deserialization-boundary input validation a networked deployment needs. This is
 // also the wire format the independent cross-language verifier (Python) consumes.
 //
-// Two transcript kinds share these encoders: plurality/multi-seat (`Transcript`,
-// version `vvp-transcript-1`) and ranked-choice Borda (`RankedTranscript`, version
-// `vvp-ranked-transcript-1`, with a `kind: "ranked"` discriminator so a reader can
-// dispatch to the right verifier from the file alone).
+// Three transcript kinds share these encoders, each with a `kind` discriminator so a reader
+// dispatches to the right verifier from the file alone: plurality/multi-seat (`Transcript`,
+// version `vvp-transcript-1`), ranked-choice Borda (`RankedTranscript`, `vvp-ranked-transcript-1`),
+// and mixnet instant-runoff (`MixnetIrvTranscript`, `vvp-mixnet-irv-transcript-1`).
 
 import { pointToHex, pointFromHex } from './group.js';
 import type { Transcript, Selection } from './election.js';
 import type { RankedTranscript, RankedBallot } from './ranked.js';
 import type { Ciphertext } from './elgamal.js';
 import type { BitProof, SumProof, DecProof } from './proofs.js';
+import type { Item, ShuffleProof } from './mixnet.js';
+import type { MixnetIrvTranscript, MixnetDecShare } from './mixnet-irv.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -191,5 +193,82 @@ export function rankedTranscriptFromJSON(json: string): RankedTranscript {
       proofs: d.proofs.map(decFromJ),
     })),
     results: j.results,
+  };
+}
+
+// --- mixnet instant-runoff (IRV) transcript -------------------------------
+const itemToJ = (it: Item): unknown => it.map(ctToJ);
+const itemFromJ = (j: any): Item => j.map(ctFromJ);
+
+function shuffleProofToJ(sp: ShuffleProof): unknown {
+  return {
+    t: sp.t,
+    intermediates: sp.intermediates.map((m) => m.map(itemToJ)),
+    openings: sp.openings.map((op) => ({ perm: op.perm, factors: op.factors.map((f) => f.map(S)) })),
+  };
+}
+function shuffleProofFromJ(j: any): ShuffleProof {
+  return {
+    t: j.t,
+    intermediates: j.intermediates.map((m: any[]) => m.map(itemFromJ)),
+    openings: j.openings.map((op: any) => ({ perm: op.perm, factors: op.factors.map((f: any[]) => f.map(s)) })),
+  };
+}
+
+const mixnetDecShareToJ = (d: MixnetDecShare): unknown => ({ trusteeIndex: d.trusteeIndex, shares: d.shares.map(P), proofs: d.proofs.map(decToJ) });
+const mixnetDecShareFromJ = (j: any): MixnetDecShare => ({ trusteeIndex: j.trusteeIndex, shares: j.shares.map(p), proofs: j.proofs.map(decFromJ) });
+
+export function mixnetIrvTranscriptToJSON(t: MixnetIrvTranscript): string {
+  return JSON.stringify({
+    version: 'vvp-mixnet-irv-transcript-1',
+    kind: 'mixnet-irv',
+    contest: t.contest,
+    candidates: t.candidates,
+    numVoters: t.numVoters,
+    eligibleRoll: t.eligibleRoll.map(P),
+    publicKey: P(t.publicKey),
+    commitments: t.commitments.map(P),
+    trustees: t.trustees,
+    threshold: t.threshold,
+    ballots: t.ballots.map((b) => ({
+      voter: b.voter,
+      credentialPub: P(b.credentialPub),
+      ballot: rankedBallotToJ(b.ballot),
+      sig: { R: P(b.sig.R), s: S(b.sig.s) },
+    })),
+    boardRoot: t.boardRoot,
+    shuffled: t.shuffled.map(itemToJ),
+    shuffleProof: shuffleProofToJ(t.shuffleProof),
+    decShares: t.decShares.map(mixnetDecShareToJ),
+    decryptedMatrices: t.decryptedMatrices, // plain 0/1 ints
+    rounds: t.rounds, // plain ints + nulls
+    winner: t.winner,
+  }, null, 2);
+}
+
+export function mixnetIrvTranscriptFromJSON(json: string): MixnetIrvTranscript {
+  const j: any = JSON.parse(json);
+  return {
+    contest: j.contest,
+    candidates: j.candidates,
+    numVoters: j.numVoters,
+    eligibleRoll: j.eligibleRoll.map(p),
+    publicKey: p(j.publicKey),
+    commitments: j.commitments.map(p),
+    trustees: j.trustees,
+    threshold: j.threshold,
+    ballots: j.ballots.map((b: any) => ({
+      voter: b.voter,
+      credentialPub: p(b.credentialPub),
+      ballot: rankedBallotFromJ(b.ballot),
+      sig: { R: p(b.sig.R), s: s(b.sig.s) },
+    })),
+    boardRoot: j.boardRoot,
+    shuffled: j.shuffled.map(itemFromJ),
+    shuffleProof: shuffleProofFromJ(j.shuffleProof),
+    decShares: j.decShares.map(mixnetDecShareFromJ),
+    decryptedMatrices: j.decryptedMatrices,
+    rounds: j.rounds,
+    winner: j.winner,
   };
 }

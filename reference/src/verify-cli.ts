@@ -3,14 +3,16 @@
 //
 //   npx tsx src/verify-cli.ts out/transcript.json   # plurality / multi-seat
 //   npx tsx src/verify-cli.ts out/ranked.json       # ranked-choice (Borda)
+//   npx tsx src/verify-cli.ts out/mixnet-irv.json   # ranked-choice IRV (mixnet)
 //
 // The transcript's own `kind` field selects the verifier, so one command checks
-// either format. Exit code 0 = VERIFIED, 1 = REJECTED, 2 = usage error.
+// any format. Exit code 0 = VERIFIED, 1 = REJECTED, 2 = usage error.
 
 import { readFileSync } from 'node:fs';
-import { transcriptFromJSON, rankedTranscriptFromJSON } from './transcript-json.js';
+import { transcriptFromJSON, rankedTranscriptFromJSON, mixnetIrvTranscriptFromJSON } from './transcript-json.js';
 import { verifyTranscript } from './verify.js';
 import { verifyRankedTranscript } from './ranked.js';
+import { verifyMixnetTranscript } from './mixnet-irv.js';
 
 const path = process.argv[2];
 if (!path) {
@@ -22,9 +24,11 @@ let result;
 try {
   const raw = readFileSync(path, 'utf8');
   const kind: unknown = JSON.parse(raw).kind;
-  result = kind === 'ranked'
-    ? verifyRankedTranscript(rankedTranscriptFromJSON(raw))
-    : verifyTranscript(transcriptFromJSON(raw));
+  result = kind === 'mixnet-irv'
+    ? verifyMixnetTranscript(mixnetIrvTranscriptFromJSON(raw))
+    : kind === 'ranked'
+      ? verifyRankedTranscript(rankedTranscriptFromJSON(raw))
+      : verifyTranscript(transcriptFromJSON(raw));
 } catch (err) {
   console.error(`❌ Could not parse/verify transcript: ${String(err)}`);
   process.exit(1);

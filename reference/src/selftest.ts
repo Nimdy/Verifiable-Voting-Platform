@@ -35,6 +35,7 @@ import { dkg, combineShares, verificationKeyAt } from './threshold.js';
 import { newSession, prepareBallot, challengeBallot, castBallot } from './session.js';
 import {
   transcriptToJSON, transcriptFromJSON, rankedTranscriptToJSON, rankedTranscriptFromJSON,
+  mixnetIrvTranscriptToJSON, mixnetIrvTranscriptFromJSON,
 } from './transcript-json.js';
 import { verifyTranscript } from './verify.js';
 
@@ -698,6 +699,19 @@ for (let trial = 0; trial < 40; trial++) {
   check(noThrow(() => verifyMixnetTranscript({ ...base, decShares: base.decShares.map((ds, j) => (j === 0 ? { ...ds, shares: ds.shares.slice(0, -1) } : ds)) }).ok) === false, 'mixnet-IRV: wrong-length decShares rejected without throwing');
   check(noThrow(() => verifyMixnetTranscript({ ...base, winner: 99 }).ok) === false, 'mixnet-IRV: out-of-range winner rejected without throwing');
   check(noThrow(() => verifyMixnetTranscript({ ...base, decryptedMatrices: base.decryptedMatrices.map((M, j) => (j === 0 ? M.map((row, i) => (i === 0 ? row.map((v, r) => (r === 0 ? 5 : v)) : row)) : M)) }).ok) === false, 'mixnet-IRV: a non-0/1 published entry rejected without throwing');
+
+  // JSON round-trips and re-verifies from the published record alone; tampering is caught; bad points reject on parse.
+  const roundIrv = mixnetIrvTranscriptFromJSON(mixnetIrvTranscriptToJSON(base));
+  check(verifyMixnetTranscript(roundIrv).ok && roundIrv.winner === base.winner, 'mixnet-IRV: round-tripped JSON transcript verifies');
+  const oj = JSON.parse(mixnetIrvTranscriptToJSON(base));
+  check(oj.kind === 'mixnet-irv', 'mixnet-IRV: transcript carries kind discriminator');
+  oj.winner = (oj.winner + 1) % 3; // tamper the published winner
+  let okT = true; try { okT = verifyMixnetTranscript(mixnetIrvTranscriptFromJSON(JSON.stringify(oj))).ok; } catch { okT = false; }
+  check(okT === false, 'mixnet-IRV: tampering the published winner in JSON is caught');
+  const oj2 = JSON.parse(mixnetIrvTranscriptToJSON(base));
+  oj2.shuffled[0][0].a = 'zz'.repeat(32); // invalid point encoding
+  let parseThrewIrv = false; try { mixnetIrvTranscriptFromJSON(JSON.stringify(oj2)); } catch { parseThrewIrv = true; }
+  check(parseThrewIrv, 'mixnet-IRV: a bad point encoding in the shuffle is rejected on parse');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);

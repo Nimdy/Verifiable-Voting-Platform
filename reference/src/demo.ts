@@ -16,7 +16,7 @@ import {
   type Transcript, type Voter, type BallotEntry, type Selection,
 } from './election.js';
 import { newSession, prepareBallot, challengeBallot, castBallot } from './session.js';
-import { transcriptToJSON, rankedTranscriptToJSON } from './transcript-json.js';
+import { transcriptToJSON, rankedTranscriptToJSON, mixnetIrvTranscriptToJSON } from './transcript-json.js';
 import {
   runStructuredElection, verifyStructured, childrenOf, allTags, isLeaf,
   type ElectionSpec, type StructuredVoter,
@@ -208,9 +208,11 @@ console.log('   ⚠ IRV REVEALS the anonymized ranking multiset (hides only WHIC
 mkdirSync('out', { recursive: true });
 writeFileSync('out/transcript.json', transcriptToJSON(t));
 writeFileSync('out/ranked.json', rankedTranscriptToJSON(rkT));
+writeFileSync('out/mixnet-irv.json', mixnetIrvTranscriptToJSON(irvT));
 console.log('Public transcripts written to reference/out/ — verify them yourself:');
 console.log('  npm run verify -- out/transcript.json   (plurality)');
-console.log('  npm run verify -- out/ranked.json        (ranked-choice Borda)\n');
+console.log('  npm run verify -- out/ranked.json        (ranked-choice Borda)');
+console.log('  npm run verify -- out/mixnet-irv.json    (ranked-choice IRV / mixnet)\n');
 
 line('━');
 console.log('  Summary: the honest election verifies; every insider attack is caught.');
