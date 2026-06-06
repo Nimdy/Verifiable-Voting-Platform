@@ -15,7 +15,18 @@ Or run it locally:
 cd playground && npm install && npm run dev
 ```
 
-Either way you get an interactive [playground](playground): run a **multi-candidate** election, watch every vote get encrypted on a public board, **audit your own ballot** (cast-as-intended), hit one button to **verify the result yourself** with a live tally — then **try to cheat it** (vote twice · vote without a credential · vote for two candidates · flip a ballot · rig the tally) and watch each get caught. Runs entirely in your browser on the same audited crypto as [`reference/`](reference). (Pre-audit demo; not for binding elections.)
+The live app has three views: **🎮 Playground** (run an election, **audit your own ballot**, **verify the result yourself**, and **try to cheat it** — vote twice · vote without a credential · vote for two · flip a ballot · rig the tally — every attack caught), **🔬 How it works** (a step-by-step walkthrough with a plain↔*show-the-cryptography* depth toggle), and **🗂️ Drill-down ballot** (hierarchical, tagged multi-contest ballots). Everything runs in your browser on the same audited crypto as [`reference/`](reference). (Pre-audit demo; not for binding elections.)
+
+## ✅ What works today (stage-1 reference, 5× adversarially reviewed)
+
+A complete, fuzz-tested (~4,700 trials) reference engine in [`reference/`](reference) — *trust root is cryptography, not a chain*:
+
+- **Eligibility & one-vote-per-voter** — Belenios-style credentials + single-use nullifiers, with a **registrar that separates identity from ballot** (no single party links a person to their vote).
+- **Ballots** — multi-candidate (1-of-K) with a zero-knowledge *exactly-one-selected* proof, and **hierarchical, tagged multi-contest** ballots (parent groups → drill-down leaf contests). *(Ranked-choice IRV via a verifiable mixnet is the next crypto milestone — [#49](https://github.com/Nimdy/voting-system-blockchain/issues/49).)*
+- **Secrecy & integrity** — exponential ElGamal, **k-of-n threshold** decryption (Pedersen DKG + Lagrange; any k of n trustees, none fewer), **cast-or-challenge** (Benaloh) auditing, a public RFC-6962 bulletin board, and a homomorphic, publicly verifiable tally.
+- **Trustlessness** — every election publishes a canonical `transcript.json` anyone re-verifies from the public record alone, checked by **two independent verifiers** (TypeScript + Python/libsodium) **cross-checked in CI on every push**.
+
+Five independent adversarial crypto reviews; every finding fixed (see [docs/CRYPTO_REVIEW.md](docs/CRYPTO_REVIEW.md)). The rest of this README is the modernized specification and roadmap.
 
 This project began as a 2014-era concept ([docs/ORIGINAL_CONCEPT.md](docs/ORIGINAL_CONCEPT.md)) for a
 blockchain voting system. The good instincts in that concept — a public bulletin board, a paper
