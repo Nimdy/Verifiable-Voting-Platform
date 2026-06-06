@@ -4,6 +4,7 @@ import {
   tamperBallot, rigResult, doubleVote, ineligibleVote, overvote, ptShort,
   type Scenario, type VerifyResult,
 } from './engine';
+import { CheckRow as Check, StatusLine } from './ui';
 
 type Live = 'audit' | 'verify' | 'adversary' | null;
 type Mode = 'real' | 'represented';
@@ -22,18 +23,9 @@ interface Phase {
 function Row({ k, v }: { k: string; v: ReactNode }) {
   return (
     <div className="flex flex-wrap gap-2 text-xs">
-      <span className="w-40 shrink-0 text-slate-500">{k}</span>
-      <span className="font-mono text-indigo-200">{v}</span>
+      <span className="w-40 shrink-0 text-ink-faint">{k}</span>
+      <span className="font-mono text-accent-ink">{v}</span>
     </div>
-  );
-}
-
-function Check({ ok, name, detail }: { ok: boolean; name: string; detail?: string }) {
-  return (
-    <li className="flex items-start gap-2 text-sm">
-      <span className={ok ? 'text-emerald-400' : 'text-rose-400'}>{ok ? '✓' : '✗'}</span>
-      <span className={ok ? 'text-slate-200' : 'text-rose-200'}>{name}{detail ? <span className="text-slate-400"> — {detail}</span> : null}</span>
-    </li>
   );
 }
 
@@ -57,7 +49,7 @@ export default function Walkthrough() {
         <Row k="contest" v={t.contest} />
         <Row k="candidates" v={t.candidates.join('  ·  ')} />
         <Row k="trustees / threshold" v={`${t.trustees} trustees · any ${t.threshold} can decrypt`} />
-        <p className="mt-2 text-xs text-slate-400">Captured declaratively in an <code>ElectionManifest</code>; everything below is derived from it.</p>
+        <p className="mt-2 text-xs text-ink-faint">Captured declaratively in an <code>ElectionManifest</code>; everything below is derived from it.</p>
       </>),
     },
     {
@@ -67,7 +59,7 @@ export default function Walkthrough() {
         <Row k="scheme" v="Pedersen / Feldman k-of-n DKG over ristretto255" />
         <Row k="public key  (= C₀)" v={ptShort(t.publicKey)} />
         <Row k="commitments" v={`${t.commitments.length} (C₀…C${t.commitments.length - 1}), one per polynomial coefficient`} />
-        <p className="mt-2 text-xs text-slate-400">The secret is a Shamir-shared polynomial P with P(0)=x; trustee j holds P(j). x is never reconstructed — decryption uses Lagrange interpolation on partial results.</p>
+        <p className="mt-2 text-xs text-ink-faint">The secret is a Shamir-shared polynomial P with P(0)=x; trustee j holds P(j). x is never reconstructed — decryption uses Lagrange interpolation on partial results.</p>
       </>),
     },
     {
@@ -77,7 +69,7 @@ export default function Walkthrough() {
         <Row k="credential" v="a fresh Schnorr keypair per voter (no SSN / durable ID — ADR-0001)" />
         <Row k="published roll" v={`${roll.length} credential public keys, e.g. ${ptShort(roll[0]!)}`} />
         <Row k="identity ↔ credential" v="held ONLY by the registrar, never serialized" />
-        <p className="mt-2 text-xs text-amber-200/90">📟 <strong>Represented:</strong> the eligibility/ID check itself happens off-system (an org roll, OIDC, a check-in kiosk). The credential keypair is real.</p>
+        <p className="mt-2 text-xs text-warn"><strong>Represented:</strong> the eligibility/ID check itself happens off-system (an org roll, OIDC, a check-in kiosk). The credential keypair is real.</p>
       </>),
     },
     {
@@ -88,7 +80,7 @@ export default function Walkthrough() {
         <Row k="proofs" v="disjunctive Chaum–Pedersen (each is 0/1) + an ‘exactly one selected’ proof" />
         <Row k="signed by" v="the voter’s credential (Schnorr)" />
         <Row k="sample ciphertext" v={ptShort(sampleBallot.selection.enc[0]!.b)} />
-        <p className="mt-2 text-xs text-amber-200/90">📟 <strong>Represented:</strong> the “phone / ballot-marking device” is a panel here — but the encryption + proofs run for real, client-side.</p>
+        <p className="mt-2 text-xs text-warn"><strong>Represented:</strong> the “phone / ballot-marking device” is a panel here — but the encryption + proofs run for real, client-side.</p>
       </>),
       live: 'audit',
     },
@@ -108,7 +100,7 @@ export default function Walkthrough() {
         <Row k="aggregate" v="homomorphic sum of all ballots, per candidate" />
         <Row k="decryption" v={`${t.decShares.length} of ${t.trustees} trustees · Lagrange-combined · each share proven`} />
         <Row k="results" v={t.candidates.map((c, j) => `${c} ${t.results[j]}`).join('   ')} />
-        <p className="mt-2 text-xs text-slate-400">Only the per-candidate totals are ever decrypted — there is no code path that decrypts a single ballot.</p>
+        <p className="mt-2 text-xs text-ink-faint">Only the per-candidate totals are ever decrypted — there is no code path that decrypts a single ballot.</p>
       </>),
     },
     {
@@ -136,13 +128,13 @@ export default function Walkthrough() {
         <Row k="public board entry" v={`${sampleBallot.voter} → credential ${ptShort(sampleBallot.credentialPub)}`} />
         <Row k="public can map to a person?" v="no — the transcript has no identities" />
         <Row k="registrar (privately) maps it to" v={sc.registrar.identityOf(sampleBallot.credentialPub) ?? '(unknown)'} />
-        <p className="mt-2 text-xs text-slate-400">The registrar alone learns <em>turnout</em> (who voted), never the vote. Linking a person to their actual choice would need the registrar AND a trustee quorum AND going off-protocol.</p>
+        <p className="mt-2 text-xs text-ink-faint">The registrar alone learns <em>turnout</em> (who voted), never the vote. Linking a person to their actual choice would need the registrar AND a trustee quorum AND going off-protocol.</p>
       </>),
     },
     {
       id: 'adversary', step: '10', title: 'Try to cheat it', actor: 'Insider', mode: 'real',
       plain: 'Play the insider. Every classic attack — vote twice, vote without a credential, vote for two, flip a ballot, rig the total — is caught by the math, and anyone can see it.',
-      tech: (<p className="text-xs text-slate-400">Each button runs the real verifier against a tampered transcript and shows exactly which check fails.</p>),
+      tech: (<p className="text-xs text-ink-faint">Each button runs the real verifier against a tampered transcript and shows exactly which check fails.</p>),
       live: 'adversary',
     },
   ];
@@ -157,52 +149,48 @@ export default function Walkthrough() {
   };
 
   return (
-    <div className="mx-auto max-w-4xl px-5 py-8">
-      <header className="mb-6 text-center">
-        <h1 className="bg-gradient-to-r from-indigo-300 to-emerald-300 bg-clip-text text-3xl font-extrabold text-transparent">🔬 How it works — end to end</h1>
-        <p className="mt-1 text-sm text-slate-400">A real election, step by step. Every artifact below is produced by the actual engine.</p>
-        <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-white/5 p-1 text-xs">
-          <button onClick={() => setTech(false)} className={`rounded-full px-3 py-1 ${!tech ? 'bg-indigo-500 text-white' : 'text-slate-300'}`}>Explain simply</button>
-          <button onClick={() => setTech(true)} className={`rounded-full px-3 py-1 ${tech ? 'bg-indigo-500 text-white' : 'text-slate-300'}`}>Show the cryptography</button>
-        </div>
-      </header>
+    <div className="mx-auto max-w-3xl px-5 pb-14">
+      <div className="mb-5 inline-flex items-center gap-1 rounded-lg border border-line bg-surface-2 p-1 text-xs">
+        <button onClick={() => setTech(false)} className={`rounded-md px-3 py-1 ${!tech ? 'bg-accent-strong text-white' : 'text-ink-muted hover:text-ink'}`}>Explain simply</button>
+        <button onClick={() => setTech(true)} className={`rounded-md px-3 py-1 ${tech ? 'bg-accent-strong text-white' : 'text-ink-muted hover:text-ink'}`}>Show the cryptography</button>
+      </div>
 
       {/* stepper */}
       <div className="mb-5 flex flex-wrap gap-1.5">
         {phases.map((ph, idx) => (
           <button key={ph.id} onClick={() => { setI(idx); setCheat(null); setAuditPick(null); }}
-            className={`rounded-md px-2.5 py-1 text-xs font-medium ${idx === i ? 'bg-indigo-500 text-white' : idx < i ? 'bg-emerald-500/20 text-emerald-300' : 'bg-white/5 text-slate-400 hover:text-white'}`}>
+            className={`rounded-md px-2.5 py-1 text-xs font-medium ${idx === i ? 'bg-accent-strong text-white' : idx < i ? 'bg-pass-soft text-pass' : 'bg-surface-2 text-ink-faint hover:text-ink'}`}>
             {ph.step}. {ph.title}
           </button>
         ))}
       </div>
 
-      <section className="rounded-2xl border border-white/10 bg-white/5 p-6 shadow-xl">
+      <section className="rounded-xl border border-line bg-surface p-5 shadow-card">
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          <span className="rounded-full bg-indigo-500/30 px-2.5 py-0.5 text-xs font-semibold text-indigo-200">{p.actor}</span>
-          <span className={`rounded-full px-2.5 py-0.5 text-xs ${p.mode === 'real' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-400/15 text-amber-200'}`}>
-            {p.mode === 'real' ? '● runs for real' : '📟 device represented'}
+          <span className="rounded-md bg-accent-soft px-2.5 py-0.5 text-xs font-semibold text-accent-ink">{p.actor}</span>
+          <span className={`rounded-md px-2.5 py-0.5 text-xs ${p.mode === 'real' ? 'bg-pass-soft text-pass' : 'bg-warn-soft text-warn'}`}>
+            {p.mode === 'real' ? '● runs for real' : 'device represented'}
           </span>
-          <h2 className="ml-auto text-lg font-semibold text-white">{p.step}. {p.title}</h2>
+          <h2 className="ml-auto text-[17px] font-semibold tracking-tight text-ink">{p.step}. {p.title}</h2>
         </div>
 
-        <p className="text-sm leading-relaxed text-slate-200">{p.plain}</p>
+        <p className="text-sm leading-relaxed text-ink-muted">{p.plain}</p>
 
-        {tech && <div className="mt-4 space-y-1.5 rounded-lg bg-slate-900/60 p-4">{p.tech}</div>}
+        {tech && <div className="mt-4 space-y-1.5 rounded-lg border border-line bg-surface-2 p-4">{p.tech}</div>}
 
         {/* live: audit */}
         {p.live === 'audit' && (
-          <div className="mt-4 rounded-lg bg-slate-800/60 p-4">
-            <p className="mb-2 text-xs text-slate-400">Audit a test ballot (Benaloh challenge): your device claims a choice — spoil it and check. A spoiled ballot is discarded, so a cheating device can never predict an audit.</p>
+          <div className="mt-4 rounded-lg border border-line bg-surface-2 p-4">
+            <p className="mb-2 text-xs text-ink-faint">Audit a test ballot (Benaloh challenge): your device claims a choice — spoil it and check. A spoiled ballot is discarded, so a cheating device can never predict an audit.</p>
             <div className="flex flex-wrap gap-2">
               {t.candidates.map((c, j) => (
-                <button key={j} onClick={() => setAuditPick(j)} className="rounded-lg bg-slate-700/70 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-600">audit “{c}”</button>
+                <button key={j} onClick={() => setAuditPick(j)} className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:border-line-strong">audit “{c}”</button>
               ))}
             </div>
             {auditPick !== null && (
               <div className="mt-3 text-sm">
-                <p className="text-emerald-300">✓ Honest device that encrypted “{t.candidates[auditPick]}” passes: {String(auditCheck(t, auditPick, auditPick))}</p>
-                <p className="text-rose-300">✗ A device that secretly encrypted “{t.candidates[(auditPick + 1) % t.candidates.length]}” passes as “{t.candidates[auditPick]}”? {String(auditCheck(t, (auditPick + 1) % t.candidates.length, auditPick))}</p>
+                <p className="text-pass">✓ Honest device that encrypted “{t.candidates[auditPick]}” passes: {String(auditCheck(t, auditPick, auditPick))}</p>
+                <p className="text-fail">✗ A device that secretly encrypted “{t.candidates[(auditPick + 1) % t.candidates.length]}” passes as “{t.candidates[auditPick]}”? {String(auditCheck(t, (auditPick + 1) % t.candidates.length, auditPick))}</p>
               </div>
             )}
           </div>
@@ -210,41 +198,39 @@ export default function Walkthrough() {
 
         {/* live: verify */}
         {p.live === 'verify' && (
-          <div className="mt-4 rounded-lg bg-slate-800/60 p-4">
+          <div className="mt-4 rounded-lg border border-line bg-surface-2 p-4">
             <ul className="space-y-1">{result.checks.map((c, idx) => <Check key={idx} {...c} />)}</ul>
-            <p className={`mt-3 rounded px-3 py-2 text-sm font-semibold ${result.ok ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'}`}>
-              {result.ok ? '🟢 VERIFIED from the public record alone — and the independent Python verifier agrees (checked in CI).' : '🔴 REJECTED'}
-            </p>
+            <StatusLine ok={result.ok}>{result.ok ? 'from the public record alone — and the independent Python verifier agrees (checked in CI).' : ''}</StatusLine>
           </div>
         )}
 
         {/* live: adversary */}
         {p.live === 'adversary' && (
-          <div className="mt-4 rounded-lg bg-slate-800/60 p-4">
+          <div className="mt-4 rounded-lg border border-line bg-surface-2 p-4">
             <div className="flex flex-wrap gap-2">
               {(['double', 'ineligible', 'overvote', 'tamper', 'rig'] as const).map((k) => (
-                <button key={k} onClick={() => runCheat(k)} className="rounded-lg bg-rose-600/80 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500">
-                  😈 {{ double: 'Vote twice', ineligible: 'No credential', overvote: 'Vote for two', tamper: 'Flip a ballot', rig: 'Rig the result' }[k]}
+                <button key={k} onClick={() => runCheat(k)} className="rounded-lg border border-fail/40 px-3 py-1.5 text-xs font-medium text-fail hover:bg-fail-soft">
+                  {{ double: 'Vote twice', ineligible: 'No credential', overvote: 'Vote for two', tamper: 'Flip a ballot', rig: 'Rig the result' }[k]}
                 </button>
               ))}
             </div>
             {cheat && (
               <div className="mt-3">
                 <ul className="space-y-1">{cheat.result.checks.filter((c) => !c.ok).map((c, idx) => <Check key={idx} {...c} />)}</ul>
-                <p className="mt-2 text-sm font-semibold text-rose-300">🔴 Caught — the verifier rejects it.</p>
+                <StatusLine ok={false}>Caught — the verifier rejects it.</StatusLine>
               </div>
             )}
           </div>
         )}
 
         <div className="mt-5 flex items-center justify-between">
-          <button disabled={i === 0} onClick={() => { setI(i - 1); setCheat(null); setAuditPick(null); }} className="rounded-lg px-3 py-1.5 text-sm text-slate-300 hover:text-white disabled:text-slate-600">← Back</button>
-          <span className="text-xs text-slate-500">{i + 1} / {phases.length}</span>
-          <button disabled={i === phases.length - 1} onClick={() => { setI(i + 1); setCheat(null); setAuditPick(null); }} className="rounded-lg bg-indigo-500/80 px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-400 disabled:bg-slate-700 disabled:text-slate-500">Next →</button>
+          <button disabled={i === 0} onClick={() => { setI(i - 1); setCheat(null); setAuditPick(null); }} className="rounded-lg px-3 py-1.5 text-sm text-ink-muted hover:text-ink disabled:text-ink-faint disabled:opacity-50">← Back</button>
+          <span className="font-mono text-xs text-ink-faint">{i + 1} / {phases.length}</span>
+          <button disabled={i === phases.length - 1} onClick={() => { setI(i + 1); setCheat(null); setAuditPick(null); }} className="rounded-lg bg-accent-strong px-4 py-1.5 text-sm font-semibold text-white hover:opacity-90 disabled:bg-surface-2 disabled:text-ink-faint">Next →</button>
         </div>
       </section>
 
-      <p className="mt-6 text-center text-xs text-slate-500">
+      <p className="mt-6 text-xs text-ink-faint">
         Real cryptography, end to end; only the physical devices (phone, kiosk, printer) are represented. Pre-audit demo — not for binding government elections.
       </p>
     </div>

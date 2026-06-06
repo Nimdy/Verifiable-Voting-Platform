@@ -10,6 +10,8 @@ import {
   type ElectionSpec, type ElectionResult, type ContestSpec, type StructuredVoter,
   encryptRanking, verifyRankingValid, verifyBit, verifySumEqual, runRankedElection, verifyRankedTranscript,
   type RankedBallot, type RankedTranscript, type RankedVoter, type Ciphertext, type BitProof,
+  runMixnetElection, verifyMixnetTranscript, ballotToRanks, SECURITY_T,
+  type MixnetVoter, type MixnetIrvTranscript, type IrvRound,
 } from '@engine';
 
 export type { Transcript, VerifyResult, KeySetup, Voter, Credential };
@@ -164,11 +166,13 @@ export function buildBallotScenario(): BallotScenario {
   return { spec, result, ok: v.ok, verified: new Set(v.perContest.filter((p) => p.result.ok).map((p) => p.id)) };
 }
 
-// ---- ranked-choice (Borda) — thin wrappers over the audited ranked engine ----
+// ---- ranked-choice (Borda) — thin wrappers over the reference ranked engine ----
 // No crypto is reimplemented: every helper calls the EXACT ranked primitives from
 // reference/src/ranked.ts (encryptRanking / verifyRankingValid / runRankedElection /
-// verifyRankedTranscript) and proofs.ts (verifyBit / verifySumEqual). This is BORDA,
-// not instant-runoff — there is no mixnet (true IRV elimination is tracked as #49).
+// verifyRankedTranscript) and proofs.ts (verifyBit / verifySumEqual). This is the BORDA
+// path — no mixnet, only per-candidate point totals are decrypted (never reveals a ballot).
+// True IRV elimination (which instead reveals the anonymized ranking multiset) is the
+// separate mixnet path below: see runIrv / verifyIrv and the Instant-runoff tab.
 export type { RankedBallot, RankedTranscript, RankedVoter };
 
 export const newRankedVoter = (ranking: number[]): RankedVoter => ({ credential: issueCredential(), ranking });
@@ -253,4 +257,37 @@ export const forgeInvalidBallot = (
   const trueRows = Array.from({ length: K }, () => 1); // each candidate still has exactly one rank
   const trueCols = Array.from({ length: K }, (_, r) => rank.filter((x) => x === r).length); // [2,0,1,1]
   return { ballot: { matrix, bitProofs, rowSums, colSums }, trueSums: { rows: trueRows, cols: trueCols } };
+};
+
+// ---- ranked-choice IRV (mixnet) — thin wrappers over the audited mixnet-irv engine -----------
+// No crypto is reimplemented: every helper calls the EXACT primitives from reference/src/mixnet-irv.ts
+// (runMixnetElection / verifyMixnetTranscript). HONEST SCOPE: mixnet-IRV reveals the anonymized
+// ranking multiset and hides only the voter↔ballot link (computational, DDH) — weaker than Borda.
+export type { MixnetVoter, MixnetIrvTranscript, IrvRound };
+export { ballotToRanks, SECURITY_T };
+
+export const newMixnetVoter = (ranking: number[]): MixnetVoter => ({ credential: issueCredential(), ranking });
+
+/** Mirrors tally()/rankedTally(): roll = the voters' own credentials + any spare eligible creds. */
+export const runIrv = (
+  contest: string,
+  candidates: string[],
+  voters: MixnetVoter[],
+  keys: KeySetup,
+  extraEligible: Point[],
+): MixnetIrvTranscript =>
+  runMixnetElection(contest, candidates, voters, keys, [...voters.map((v) => v.credential.pub), ...extraEligible]);
+
+export const verifyIrv = (t: MixnetIrvTranscript): VerifyResult => verifyMixnetTranscript(t);
+
+/** A short credential pub for the "board order" column (links to a person only via the registrar). */
+export const credShort = (t: MixnetIrvTranscript, i: number): string => {
+  const b = t.ballots[i];
+  return b ? ptShort(b.credentialPub, 10) : '';
+};
+
+/** A short ciphertext sample for a shuffled item — DELIBERATELY carries no identity (that's the point). */
+export const itemSampleHex = (t: MixnetIrvTranscript, item: number): string => {
+  const it = t.shuffled[item];
+  return it && it[0] ? hexShort(toHex(it[0]!.b.toRawBytes()), 12) : '';
 };
