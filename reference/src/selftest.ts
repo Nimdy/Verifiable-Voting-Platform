@@ -20,6 +20,10 @@ import {
   type Item, type ShuffleProof,
 } from './mixnet.js';
 import {
+  runMixnetElection, verifyMixnetTranscript, tabulateIrv, ballotToRanks, flattenBallot,
+  type MixnetVoter, type MixnetIrvTranscript, type MixnetDecShare,
+} from './mixnet-irv.js';
+import {
   proveBit, verifyBit, proveDecryption, verifyDecryption, proveSumOne, verifySumOne,
   proveSumEqual, verifySumEqual,
 } from './proofs.js';
@@ -593,6 +597,107 @@ for (let trial = 0; trial < 40; trial++) {
     && hashToScalar('mixnet-shuffle', dpts) !== hashToScalar('ballot-bit', dpts)
     && hashToScalar('mixnet-shuffle', dpts) !== hashToScalar('sum-eq', dpts),
     'mixnet: domain-separation label differs from every other proof label');
+}
+
+// 20. Mixnet-IRV (end-to-end verifiable instant-runoff): ranked ballots → verifiable shuffle →
+//     threshold-decrypt → deterministic public IRV. Honest verifies; the shuffle is bound to the
+//     board ballots; tabulation is recomputed; every soundness pitfall is caught; never throws.
+{
+  const noThrow = (fn: () => boolean): boolean | 'threw' => { try { return fn(); } catch { return 'threw'; } };
+  const rankingToMatrix = (ranking: number[]): number[][] => {
+    const K = ranking.length;
+    return Array.from({ length: K }, (_, i) => Array.from({ length: K }, (_, r) => (ranking[i] === r ? 1 : 0)));
+  };
+
+  // --- pure deterministic IRV (instant; no crypto) ---
+  const irv = (rankings: number[][]) => tabulateIrv(rankings.map(rankingToMatrix), rankings[0]!.length);
+  const w = (rankings: number[][]): number => { const o = irv(rankings); return 'winner' in o ? o.winner : -1; };
+  check(w([[0]]) === 0, 'IRV K=1: the sole candidate wins round 0');
+  check(w([[0, 1], [1, 0]]) === 0, 'IRV even 2-way split: highest index eliminated ⇒ candidate 0 wins');
+  check(w([[0, 1, 2], [0, 1, 2], [0, 1, 2]]) === 0, 'IRV all-identical: unanimous top choice wins round 0');
+  { const o = irv([[0, 1, 2], [2, 0, 1], [1, 2, 0]]); // perfectly symmetric 3-cycle
+    check('winner' in o && o.winner === 0 && o.rounds.length === 2 && o.rounds[0]!.eliminatedThisRound === 2, 'IRV symmetric 3-way tie: highest indices fall first, candidate 0 survives'); }
+  check('error' in tabulateIrv([[[1, 1], [0, 0]]], 2), 'IRV rejects a non-permutation matrix (row sums to 2)');
+  check(ballotToRanks([[1, 0], [1, 0]], 2) === null, 'ballotToRanks rejects a non-permutation (column reused)');
+
+  // --- honest end-to-end election (K=3, n=3, a genuine runoff) ---
+  const keys = setupKeys(3, 2);
+  const reg = new Registrar();
+  const packets = reg.register([{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
+  const roll = reg.publishedRoll();
+  const cands = ['Ana', 'Ben', 'Cy'];
+  const castRankings = [[0, 1, 2], [2, 0, 1], [1, 2, 0]]; // 3-cycle → round0 [1,1,1] elim Cy(2) → round1 [2,1,0] Ana wins
+  const voters: MixnetVoter[] = packets.map((p, i) => ({ credential: p.credential, ranking: castRankings[i]! }));
+  const base = runMixnetElection('Chair (IRV)', cands, voters, keys, roll, [1, 2]);
+  const bv = verifyMixnetTranscript(base);
+  check(bv.ok, 'mixnet-IRV: honest election verifies');
+  check(base.winner === 0 && base.rounds.length === 2 && base.rounds[0]!.eliminatedThisRound === 2 && JSON.stringify(base.rounds[1]!.tallies) === JSON.stringify([2, 1, 0]), 'mixnet-IRV: winner + round-by-round trace are correct');
+
+  // plaintext-preservation + anonymity: recovered ranking multiset == cast multiset; no voter linkage published
+  const recoveredRanks = base.decryptedMatrices.map((M) => JSON.stringify(ballotToRanks(M, 3))).sort();
+  const castRanks = castRankings.map((r) => JSON.stringify(r)).sort(); // ballotToRanks(rankingToMatrix(r)) === r
+  check(JSON.stringify(recoveredRanks) === JSON.stringify(castRanks), 'mixnet-IRV: shuffle preserves the ranking multiset (and only the link is hidden)');
+  // Re-encryption changed every ciphertext: publishing L0 verbatim as `shuffled` is caught (deterministic).
+  const ctHex = (items: Item[]): string => items.map((it) => it.map((c) => pointToHex(c.a) + pointToHex(c.b)).join()).join('|');
+  check(ctHex(base.shuffled) !== ctHex(base.ballots.map((b) => flattenBallot(b.ballot))), 'mixnet-IRV: the shuffle re-encrypts every ciphertext (output != board-order L0)');
+  // Decorrelation (the ONE privacy property this path provides): output order != board/input order. Distinct
+  // rankings ⇒ decSeq === boardSeq iff the secret permutation is identity; retry across fresh runs so an honest
+  // identity permutation (prob 1/n! per run) can't flake, while a dropped/identity-shuffle regression ALWAYS fails.
+  const distinctRk = [[0, 1, 2], [2, 0, 1], [1, 2, 0]];
+  let decorrelated = false;
+  for (let attempt = 0; attempt < 12 && !decorrelated; attempt++) {
+    const r2 = new Registrar();
+    const pk2 = r2.register([{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
+    const vs: MixnetVoter[] = pk2.map((p, i) => ({ credential: p.credential, ranking: distinctRk[i]! }));
+    const e = runMixnetElection('decorr', cands, vs, keys, r2.publishedRoll(), [1, 2]);
+    const boardSeq = vs.slice().sort((a, b) => pointToHex(a.credential.pub).localeCompare(pointToHex(b.credential.pub))).map((v) => JSON.stringify(v.ranking));
+    const decSeq = e.decryptedMatrices.map((M) => JSON.stringify(ballotToRanks(M, 3)));
+    if (JSON.stringify(decSeq) !== JSON.stringify(boardSeq)) decorrelated = true;
+  }
+  check(decorrelated, 'mixnet-IRV: the shuffle decorrelates output order from board/input order (link-hiding)');
+
+  // --- adversarial: each must REJECT ---
+  // S5 shuffle-input binding: shuffle a DOCTORED L0 (one plaintext changed) but keep honest ballots.
+  const doctoredL0 = base.ballots.map((b) => flattenBallot(b.ballot));
+  doctoredL0[0]![0] = { a: doctoredL0[0]![0]!.a, b: doctoredL0[0]![0]!.b.add(G) }; // flips a plaintext bit
+  const dShuf = shuffleProve(base.publicKey, doctoredL0);
+  check(verifyMixnetTranscript({ ...base, shuffled: dShuf.L, shuffleProof: dShuf.proof }).ok === false, 'mixnet-IRV: a shuffle of a doctored input (not the board ballots) is rejected');
+
+  // dropped ballot in the shuffle → shape gate
+  check(verifyMixnetTranscript({ ...base, shuffled: base.shuffled.slice(0, -1) }).ok === false, 'mixnet-IRV: a dropped item in the shuffle is rejected (shape)');
+
+  // S6 forged decryption proof
+  const forgedDS: MixnetDecShare[] = base.decShares.map((ds, j) => (j === 0
+    ? { ...ds, proofs: ds.proofs.map((p, i) => (i === 0 ? { ...p, s: mod(p.s + 1n, N) } : p)) } : ds));
+  check(verifyMixnetTranscript({ ...base, decShares: forgedDS }).ok === false, 'mixnet-IRV: a forged decryption proof is rejected');
+
+  // S6 below quorum (k-1 trustees)
+  check(verifyMixnetTranscript({ ...base, decShares: base.decShares.slice(0, keys.threshold - 1) }).ok === false, 'mixnet-IRV: fewer than k trustees cannot decrypt');
+
+  // S6 bogus trustee index
+  const bogusIdx = base.decShares.map((ds, j) => (j === 0 ? { ...ds, trusteeIndex: 99 } : ds));
+  check(verifyMixnetTranscript({ ...base, decShares: bogusIdx }).ok === false, 'mixnet-IRV: an out-of-range trustee index is rejected');
+
+  // S6 wrong-key: give trustee #1's record trustee #2's shares/proofs (verified against vk(1) → fails)
+  const swappedKey = base.decShares.map((ds, j) => (j === 0 ? { ...ds, shares: base.decShares[1]!.shares, proofs: base.decShares[1]!.proofs } : ds));
+  check(verifyMixnetTranscript({ ...base, decShares: swappedKey }).ok === false, 'mixnet-IRV: a share under the wrong trustee key is rejected');
+
+  // S8 tampered winner / flipped elimination (verifier recomputes the tabulation + tie-break)
+  check(verifyMixnetTranscript({ ...base, winner: 1 }).ok === false, 'mixnet-IRV: a tampered winner is rejected');
+  const flippedElim = base.rounds.map((r, j) => (j === 0 ? { ...r, eliminatedThisRound: 1 } : r)); // verifier recomputes victim = 2 (highest-index tie-break)
+  check(verifyMixnetTranscript({ ...base, rounds: flippedElim }).ok === false, 'mixnet-IRV: a tampered elimination (wrong tie-break) is rejected');
+
+  // S7 tampered decryptedMatrices (verifier recovers its own + compares)
+  const tamperedMx = base.decryptedMatrices.map((M, j) => (j === 0 ? M.map((row, i) => (i === 0 ? row.map((v, r) => (r === 0 ? 1 - v : v)) : row)) : M));
+  check(verifyMixnetTranscript({ ...base, decryptedMatrices: tamperedMx }).ok === false, 'mixnet-IRV: a tampered published matrix is rejected');
+
+  // S3 ineligible: drop a credential from the published roll
+  check(verifyMixnetTranscript({ ...base, eligibleRoll: base.eligibleRoll.slice(1) }).ok === false, 'mixnet-IRV: a ballot off the eligible roll is rejected');
+
+  // S0 / robustness: malformed transcripts REJECT without throwing
+  check(noThrow(() => verifyMixnetTranscript({ ...base, decShares: base.decShares.map((ds, j) => (j === 0 ? { ...ds, shares: ds.shares.slice(0, -1) } : ds)) }).ok) === false, 'mixnet-IRV: wrong-length decShares rejected without throwing');
+  check(noThrow(() => verifyMixnetTranscript({ ...base, winner: 99 }).ok) === false, 'mixnet-IRV: out-of-range winner rejected without throwing');
+  check(noThrow(() => verifyMixnetTranscript({ ...base, decryptedMatrices: base.decryptedMatrices.map((M, j) => (j === 0 ? M.map((row, i) => (i === 0 ? row.map((v, r) => (r === 0 ? 5 : v)) : row)) : M)) }).ok) === false, 'mixnet-IRV: a non-0/1 published entry rejected without throwing');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);

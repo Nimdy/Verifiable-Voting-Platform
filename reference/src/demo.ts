@@ -22,6 +22,7 @@ import {
   type ElectionSpec, type StructuredVoter,
 } from './structured.js';
 import { runRankedElection, verifyRankedTranscript, type RankedVoter } from './ranked.js';
+import { runMixnetElection, verifyMixnetTranscript, type MixnetVoter } from './mixnet-irv.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { verifyTranscript, type VerifyResult } from './verify.js';
 
@@ -186,7 +187,22 @@ const rkT = runRankedElection('Board chair (ranked)', rkCands, rkVoters, keys, e
 const rkV = verifyRankedTranscript(rkT);
 console.log('   Borda totals: ' + rkCands.map((c, i) => `${c} ${rkT.results[i]}`).join('   '));
 console.log(`   ${rkV.ok ? '🟢 VERIFIED' : '🔴 REJECTED'} — each ballot a valid permutation matrix; Borda tally threshold-decrypted by 3 of 5 trustees.`);
-console.log('   (True IRV elimination still needs a verifiable mixnet — #49.)\n');
+console.log('   (Borda never reveals a ballot. For true IRV elimination, see the mixnet path below.)\n');
+
+console.log('RANKED-CHOICE (IRV) — verifiable instant-runoff via a re-encryption mixnet:');
+line();
+const irvCands = ['Ada', 'Grace', 'Alan'];
+// 2× Ada>Grace>Alan, 2× Grace>Ada>Alan, 1× Alan>Ada>Grace → round 1 [2,2,1] eliminate Alan → round 2 [3,2,0] Ada wins.
+const irvRanks = [[0, 1, 2], [0, 1, 2], [1, 0, 2], [1, 0, 2], [1, 2, 0]];
+const irvVoters: MixnetVoter[] = packets.slice(0, 5).map((pk, i) => ({ credential: pk.credential, ranking: irvRanks[i]! }));
+const irvT = runMixnetElection('Board chair (IRV)', irvCands, irvVoters, keys, eligibleRoll, [1, 3, 5]);
+const irvV = verifyMixnetTranscript(irvT);
+for (const [n, rd] of irvT.rounds.entries()) {
+  const tally = irvCands.map((c, i) => `${c} ${rd.tallies[i]}`).join('  ');
+  console.log(`   round ${n + 1}: ${tally}${rd.eliminatedThisRound !== null ? `  → eliminate ${irvCands[rd.eliminatedThisRound]}` : `  → 🏆 ${irvCands[rd.winner!]} wins`}`);
+}
+console.log(`   ${irvV.ok ? '🟢 VERIFIED' : '🔴 REJECTED'} — ballots shuffled by a proven re-encryption mixnet, then threshold-decrypted and tabulated; the verifier re-runs the rounds.`);
+console.log('   ⚠ IRV REVEALS the anonymized ranking multiset (hides only WHICH voter cast which) — weaker than Borda. Not coercion-resistant.\n');
 
 // Publish the transcripts so anyone can re-verify them from the public record alone.
 mkdirSync('out', { recursive: true });
