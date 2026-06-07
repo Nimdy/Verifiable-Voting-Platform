@@ -16,6 +16,7 @@ import { verifyMixnetTranscript } from './mixnet-irv.js';
 import { pollingExportFromJSON, verifyExport } from './rla.js';
 import { trailFromJSON, verifyTrail } from './everlasting.js';
 import { seleneTranscriptFromJSON, verifySeleneTranscript } from './selene.js';
+import { verifyTwTranscriptJSON } from './mixnet-tw.js';
 
 const path = process.argv[2];
 if (!path) {
@@ -33,7 +34,9 @@ try {
       ? verifyTrail(trailFromJSON(raw))
       : kind === 'selene'
         ? verifySeleneTranscript(seleneTranscriptFromJSON(raw))
-        : kind === 'mixnet-irv'
+        : kind === 'tw-shuffle'
+          ? verifyTwTranscriptJSON(raw)
+          : kind === 'mixnet-irv'
           ? verifyMixnetTranscript(mixnetIrvTranscriptFromJSON(raw))
           : kind === 'ranked'
             ? verifyRankedTranscript(rankedTranscriptFromJSON(raw))

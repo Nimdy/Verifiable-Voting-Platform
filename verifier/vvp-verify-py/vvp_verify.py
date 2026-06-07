@@ -1262,6 +1262,157 @@ def verify_everlasting_trail(j):
     return all(c[1] for c in checks), checks, None
 
 
+# ---- Terelius-Wikstrom O(N) proof of shuffle (mirrors reference/src/mixnet-tw.ts, ADR-0012) ----------
+# EXPERIMENTAL / NOT AUDITED — the independent cross-verifier of the TW shuffle. Two implementations agreeing
+# is the strongest in-house soundness signal; it is NOT an external audit (see ADR-0012 / the TS module header).
+TW_GEN_LABEL = "vvp-tw-gen-v1|"
+TW_GEN0_HEX = "805862570f1accee574731ffb63f498440e324a6bb3c6860902a8e393f4c067e"
+
+
+def tw_gen(i: int) -> bytes:
+    return pysodium.crypto_core_ristretto255_from_hash(hashlib.sha512((TW_GEN_LABEL + str(i)).encode()).digest())
+
+
+if tw_gen(0).hex() != TW_GEN0_HEX:
+    raise SystemExit("mixnet-tw: NUMS generator vector does not match pinned constant")
+
+
+def tw_generator_vector(n: int):
+    hs = []
+    seen = set()
+    for i in range(n):
+        h = tw_gen(i)
+        if h == G or h == ZERO or h == H or h.hex() in seen:
+            raise ValueError(f"degenerate TW generator at {i}")
+        seen.add(h.hex())
+        hs.append(h)
+    return hs
+
+
+def tw_msm(coeffs, pts) -> bytes:
+    acc = ZERO
+    for k in range(len(coeffs)):
+        acc = padd(acc, smul(pts[k], coeffs[k]))
+    return acc
+
+
+def tw_statement_points(pk, hs, L0, L, c):
+    pts = [pk, H] + list(hs)
+    for lst in (L0, L):
+        for it in lst:
+            for ct in it:
+                pts.append(ct["a"]); pts.append(ct["b"])
+    pts.extend(c)
+    return pts
+
+
+def tw_challenge_vector(label: str, points, n: int):
+    seed = scalar_be(hash_to_scalar(label, points))
+    out = []
+    for i in range(n):
+        d = hashlib.sha512(b"vvp-fs-v1" + label.encode() + seed + u32(i)).digest()
+        out.append(int.from_bytes(d, "big") % L)
+    return out
+
+
+def verify_tw_mul(X, Y, Z, p) -> bool:
+    za, zrx, zrz = parse_scalar(p["za"]), parse_scalar(p["zrx"]), parse_scalar(p["zrz"])
+    T1, T2 = parse_point(p["T1"]), parse_point(p["T2"])
+    c = hash_to_scalar("mixnet-tw-mul-v1", [G, H, Y, X, Z, T1, T2])
+    if padd(smul(G, za), smul(H, zrx)) != padd(T1, smul(X, c)):
+        return False
+    if padd(smul(Y, za), smul(H, zrz)) != padd(T2, smul(Z, c)):
+        return False
+    return True
+
+
+def verify_tw_shuffle(j):
+    checks = []
+
+    def add(name, ok, detail=None):
+        checks.append((name, ok, detail))
+
+    if j.get("version") != "vvp-tw-shuffle-1" or j.get("kind") != "tw-shuffle":
+        add("Transcript version/kind recognized", False)
+        return False, checks, None
+    pk = parse_point(j["publicKey"])
+    L0 = [[parse_ct(ct) for ct in it] for it in j["L0"]]
+    Lout = [[parse_ct(ct) for ct in it] for it in j["L"]]
+    pr = j["proof"]
+    n = len(L0)
+    W = pr["W"]
+    shape_ok = (
+        n >= 2 and isinstance(W, int) and not isinstance(W, bool) and W >= 1
+        and all(len(it) == W for it in L0) and len(Lout) == n and all(len(it) == W for it in Lout)
+        and len(pr["c"]) == n and len(pr["Gamma"]) == n and len(pr["A"]) == n + 1 and len(pr["steps"]) == n
+        and len(pr["TG"]) == n and len(pr["zg"]) == n and len(pr["zgamma"]) == n
+        and len(pr["Ta"]) == W and len(pr["Tb"]) == W and len(pr["zR"]) == W
+    )
+    add("EXPERIMENTAL / NOT AUDITED (ADR-0012; default mix is Sako-Kilian, production should use Verificatum) - shape: n>=2 items of uniform width W; n commitments, n+1 products, n steps, W per-component responses", shape_ok)
+    if not shape_ok:
+        return False, checks, None
+    add("Joint key pk is non-identity", pk != ZERO)
+    if pk == ZERO:
+        return False, checks, None
+
+    hs = tw_generator_vector(n)
+    add("NUMS generator vector re-derived from the label scheme (not the proof)", True)
+
+    c = [parse_point(p) for p in pr["c"]]
+    Gamma = [parse_point(p) for p in pr["Gamma"]]
+    A = [parse_point(p) for p in pr["A"]]
+    TD = parse_point(pr["TD"])
+    TG = [parse_point(p) for p in pr["TG"]]
+    Ta = [parse_point(p) for p in pr["Ta"]]
+    Tb = [parse_point(p) for p in pr["Tb"]]
+    zg = [parse_scalar(s) for s in pr["zg"]]
+    zgamma = [parse_scalar(s) for s in pr["zgamma"]]
+    zrD = parse_scalar(pr["zrD"])
+    zR = [parse_scalar(s) for s in pr["zR"]]
+    s0 = parse_scalar(pr["s0"]); sN = parse_scalar(pr["sN"])
+    add("All response scalars are canonical (in [0, N))", True)  # parse_scalar already gates range
+
+    S = tw_statement_points(pk, hs, L0, Lout, c)
+    e = tw_challenge_vector("mixnet-tw-evec", S, n)
+    D = tw_msm(e, c)
+    x = hash_to_scalar("mixnet-tw-prodx", S + Gamma + [D])
+    cc = hash_to_scalar("mixnet-tw-msm", S + Gamma + [D, TD] + TG + Ta + Tb)
+
+    L0a = lambda w: [it[w]["a"] for it in L0]
+    L0b = lambda w: [it[w]["b"] for it in L0]
+    Pa = [tw_msm(e, [it[w]["a"] for it in Lout]) for w in range(W)]
+    Pb = [tw_msm(e, [it[w]["b"] for it in Lout]) for w in range(W)]
+
+    d_ok = padd(tw_msm(zg, hs), smul(H, zrD)) == padd(TD, smul(D, cc))
+    add("Commitment-consistency: D = sum gj*hj + rD*H binds g to the pre-committed permutation", d_ok)
+
+    gamma_ok = all(padd(smul(G, zg[jx]), smul(H, zgamma[jx])) == padd(TG[jx], smul(Gamma[jx], cc)) for jx in range(n))
+    add("Every Gamma_j opens to the same g_j used everywhere (single committed permutation)", gamma_ok)
+
+    me_ok = True
+    for w in range(W):
+        if padd(tw_msm(zg, L0a(w)), smul(G, zR[w])) != padd(Ta[w], smul(Pa[w], cc)):
+            me_ok = False
+        if padd(tw_msm(zg, L0b(w)), smul(pk, zR[w])) != padd(Tb[w], smul(Pb[w], cc)):
+            me_ok = False
+    add("Re-encryption multi-exp holds for BOTH (a,b) and ALL W components (same g => items moved whole)", me_ok)
+
+    pstar = 1
+    for ei in e:
+        pstar = (pstar * ((ei - x) % L)) % L
+    ep0 = A[0] == padd(smul(G, 1), smul(H, s0))
+    epN = A[n] == padd(smul(G, pstar), smul(H, sN))
+    step_ok = True
+    for k in range(1, n + 1):
+        Y = psub(Gamma[k - 1], smul(G, x))
+        if not verify_tw_mul(A[k - 1], Y, A[k], pr["steps"][k - 1]):
+            step_ok = False
+    add("Permutation argument: prod(gj-x) = prod(ei-x) via endpoints + every multiplication step ({g}={e})", ep0 and epN and step_ok)
+
+    ok = all(c2[1] for c2 in checks)
+    return ok, checks, None
+
+
 def normalize_ints(o):
     """Make Python's number handling match JS's exactly. JSON `2.0` parses to a JS Number indistinguishable
     from `2` (Number.isInteger(2.0) is true), but Python's json parses it to a float that isinstance(int)
@@ -1292,6 +1443,7 @@ def main():
         verifier = (verify_rla_export if kind == "rla-export"
                     else verify_everlasting_trail if kind == "everlasting-trail"
                     else verify_selene if kind == "selene"
+                    else verify_tw_shuffle if kind == "tw-shuffle"
                     else verify_mixnet_irv if kind == "mixnet-irv"
                     else verify_ranked if kind == "ranked"
                     else verify)

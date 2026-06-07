@@ -27,6 +27,8 @@ import { makeManifest, buildAnchor, verifyAnchor, reportedResults, pollingExport
 import { AnchorLog, verifyAnchorLog, verifyRootAnchored, rootCommitment } from './anchorlog.js';
 import { buildTrail, verifyTrail, trailToJSON, commitVote, type EverlastingTrail } from './everlasting.js';
 import { runSeleneElection, verifySeleneTranscript, seleneTranscriptToJSON, retrieveTracker, fakeOpening, type SeleneVoter } from './selene.js';
+import { twShuffleProve, verifyTwShuffle, twTranscriptToJSON } from './mixnet-tw.js';
+import { encrypt as encryptCt } from './elgamal.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { verifyTranscript, type VerifyResult } from './verify.js';
 
@@ -301,6 +303,18 @@ console.log(`   A voter retrieves her tracker and reads her own vote (${CANDIDAT
 console.log(`   Under coercion she shows a FAKE opening pointing at a DIFFERENT row, key pk = x·G unchanged: ${equivOk ? '🟢 YES' : '🔴 NO'}`);
 console.log('   ⚠ This is coercion-MITIGATION, NOT coercion-resistance (weaker than JCJ/Civitas). In this PoC the trapdoor key is generated in-process and tracker assignment is in-process, so the mitigation is cryptographically DEMONSTRATED but NOT operative: it needs voter-contributed keys over an untappable channel, distributed tracker assignment, and an eager coercion-free retrieval window. The full (tracker,vote) multiset is public, so a forced-instruction ("Italian") attack still works. See ADR-0011.\n');
 
+console.log('TERELIUS–WIKSTRÖM O(N) SHUFFLE (⚠ EXPERIMENTAL, ADR-0012) — the efficiency upgrade path:');
+line();
+// A small re-encryption shuffle proved with the O(N) TW argument (vs the O(t·N) Sako–Kilian default).
+const twPk = t.publicKey;
+const twL0 = Array.from({ length: 7 }, (_, i) => [encryptCt(twPk, BigInt(i % 3), randScalar()), encryptCt(twPk, BigInt((i + 1) % 2), randScalar())]);
+const { L: twL, proof: twProof } = twShuffleProve(twPk, twL0);
+const twOk = verifyTwShuffle(twPk, twL0, twL, twProof).ok;
+const twTamperOk = verifyTwShuffle(twPk, twL0, twL.map((it, i) => (i === 0 ? it.map((ct, w) => (w === 0 ? { a: ct.a.add(twPk), b: ct.b } : ct)) : it)), twProof).ok;
+console.log(`   ${twL0.length} ciphertexts shuffled + re-encrypted, proven a genuine permutation in O(N) (not O(t·N)) — proof verifies: ${twOk ? '🟢 YES' : '🔴 NO'}`);
+console.log(`   Alter one output ciphertext → the multi-exponentiation argument rejects: ${twTamperOk === false ? '🟢 YES' : '🔴 NO'}`);
+console.log('   ⚠ EXPERIMENTAL / NOT AUDITED / NOT THE DEFAULT. A proof of shuffle is the most soundness-treacherous primitive there is (the 2019 SwissPost/Scytl break was a missing check here). This is cross-verified (TS + Python, zero divergence) and adversarially tested, but that is NOT an external audit — the default mix path stays Sako–Kilian (mixnet.ts), and production should use Verificatum. See ADR-0012.\n');
+
 // Publish the transcripts so anyone can re-verify them from the public record alone.
 mkdirSync('out', { recursive: true });
 writeFileSync('out/transcript.json', transcriptToJSON(t));
@@ -309,13 +323,15 @@ writeFileSync('out/mixnet-irv.json', mixnetIrvTranscriptToJSON(irvT));
 writeFileSync('out/rla-export.json', pollingExportToJSON(rlaExport));
 writeFileSync('out/everlasting-trail.json', trailToJSON(evTrail));
 writeFileSync('out/selene.json', seleneTranscriptToJSON(sel.transcript));
+writeFileSync('out/tw-shuffle.json', twTranscriptToJSON(twPk, twL0, twL, twProof));
 console.log('Public transcripts written to reference/out/ — verify them yourself:');
 console.log('  npm run verify -- out/transcript.json        (plurality)');
 console.log('  npm run verify -- out/ranked.json            (ranked-choice Borda)');
 console.log('  npm run verify -- out/mixnet-irv.json        (ranked-choice IRV / mixnet)');
 console.log('  npm run verify -- out/rla-export.json        (paper + RLA hybrid anchor)');
 console.log('  npm run verify -- out/everlasting-trail.json (everlasting-privacy commitment trail)');
-console.log('  npm run verify -- out/selene.json            (Selene coercion-mitigation trackers)\n');
+console.log('  npm run verify -- out/selene.json            (Selene coercion-mitigation trackers)');
+console.log('  npm run verify -- out/tw-shuffle.json        (Terelius–Wikström O(N) shuffle — experimental)\n');
 
 line('━');
 console.log('  Summary: the honest election verifies; every insider attack is caught.');

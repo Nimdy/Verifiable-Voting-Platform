@@ -94,6 +94,7 @@ These are tracked on the [roadmap](../docs/ROADMAP.md) (M1/M3), not oversights:
 | `src/anchorlog.ts` | chain-anchor seam: signed, hash-chained transparency log of **roots only** (ADR-0002/0003) |
 | `src/everlasting.ts` | everlasting/post-quantum **privacy** primitive: perfectly-hiding Pedersen commitment trail bound to each ballot by a consistency NIZK ([ADR-0010](../docs/ADRs/ADR-0010-everlasting-post-quantum-privacy-via-perfectly-hiding-pedersen.md)) |
 | `src/selene.ts` | Selene verifiable trackers: transparent individual verifiability + coercion-**mitigation** (equivocable ephemeral opening), via the mixnet + threshold decrypt ([ADR-0011](../docs/ADRs/ADR-0011-selene-verifiable-trackers-are-coercion-mitigation-not-resistance.md)) |
+| `src/mixnet-tw.ts` | ⚠️ **EXPERIMENTAL** Terelius–Wikström **O(N)** proof of shuffle (vs the O(t·N) default) — not audited, not the default; production should use Verificatum ([ADR-0012](../docs/ADRs/ADR-0012-terelius-wikstrom-on-shuffle-ships-experimental-not-as-default.md)) |
 | `src/verify.ts` | the independent verifier (always returns a verdict) |
 | `src/transcript-json.ts` | canonical JSON (de)serialization of a transcript (plurality **and** ranked) |
 | `src/verify-cli.ts` | standalone CLI: re-verify a plurality or ranked transcript from the public record alone |
