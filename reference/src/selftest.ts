@@ -2,7 +2,7 @@
 // for a formal audit — but it catches the obvious ways ZK proofs go wrong
 // (forgeable proofs, malleable proofs, wrong tallies). Run: npm run selftest
 
-import { G, H, N, ZERO, mod, mul, randScalar, scalarTo32, invMod, pointToHex, hashToScalar, scalarFromDecimal } from './group.js';
+import { G, H, N, ZERO, mod, mul, randScalar, scalarTo32, invMod, pointToHex, pointFromHex, hashToScalar, scalarFromDecimal } from './group.js';
 import { Registrar } from './registrar.js';
 import {
   runStructuredElection, verifyStructured, validateSpec, type ElectionSpec, type StructuredVoter,
@@ -26,7 +26,7 @@ import {
 import {
   proveBit, verifyBit, proveDecryption, verifyDecryption, proveSumOne, verifySumOne,
   proveSumEqual, verifySumEqual, proveConsistency, verifyConsistency, proveCommitBit, verifyCommitBit,
-  proveCommitSum, verifyCommitSum,
+  proveCommitSum, verifyCommitSum, proveTrackerConsistency, verifyTrackerConsistency,
 } from './proofs.js';
 import { issueCredential, sign, verifySig } from './credentials.js';
 import {
@@ -47,6 +47,11 @@ import {
   commitVote, addCommitments, buildTrail, verifyTrail, trailToJSON, trailFromJSON, commitmentTotals,
   type EverlastingTrail,
 } from './everlasting.js';
+import {
+  runSeleneElection, verifySeleneTranscript, seleneTranscriptToJSON, seleneTranscriptFromJSON,
+  retrieveTracker, fakeOpening, trackerCommit, pointEncrypt,
+  type SeleneVoter, type SeleneTranscript,
+} from './selene.js';
 import {
   transcriptToJSON, transcriptFromJSON, rankedTranscriptToJSON, rankedTranscriptFromJSON,
   mixnetIrvTranscriptToJSON, mixnetIrvTranscriptFromJSON,
@@ -1027,6 +1032,71 @@ for (let trial = 0; trial < 40; trial++) {
   check(noThrow(() => verifyTrail({ contest: 'x', candidates: [], selectionLimit: 1, publicKey: h, ballots: [] } as EverlastingTrail).ok) === false, 'everlasting: verifyTrail on an empty candidate set is rejected without throwing');
   check(noThrow(() => verifyTrail({ ...trail, ballots: [{ cells: [] }] } as unknown as EverlastingTrail).ok) === false, 'everlasting: verifyTrail on a wrong-shape ballot is rejected without throwing');
   check(noThrow(() => verifyTrail({ ...trail, selectionLimit: 0 } as EverlastingTrail).ok) === false, 'everlasting: verifyTrail on an out-of-range selection limit is rejected without throwing');
+}
+
+// 25. Selene coercion-MITIGATION tracker layer (ADR-0011): verifiable (tracker, vote) rows via the mixnet +
+//     threshold decryption; transparent individual retrieval; equivocation on the EPHEMERAL opening (never the
+//     key); tracker↔commitment consistency. Honest election verifies; retrieval reads the right vote;
+//     equivocation points anywhere with the key intact; every tamper is caught; the verifier never throws.
+{
+  const noThrow = (fn: () => boolean): boolean | 'threw' => { try { return fn(); } catch { return 'threw'; } };
+  const sKeys = dkg(3, 2);
+  const sCands = ['A', 'B', 'C'];
+  const sCreds = Array.from({ length: 6 }, () => issueCredential());
+  const sChoices = [0, 1, 0, 2, 0, 1]; // A:3 B:2 C:1
+  const sVoters: SeleneVoter[] = sCreds.map((c, i) => ({ credential: c, choice: sChoices[i]! }));
+  const { transcript: st, secrets } = runSeleneElection('Chair', sCands, sVoters, sKeys, sCreds.map((c) => c.pub), [1, 2, 3]);
+
+  check(verifySeleneTranscript(st).ok, 'selene: an honest election verifies (shuffle + threshold decrypt + tracker consistency)');
+  check(JSON.stringify(st.results) === JSON.stringify([3, 2, 1]), 'selene: announced results match the choices');
+  check(verifySeleneTranscript(seleneTranscriptFromJSON(seleneTranscriptToJSON(st))).ok, 'selene: a transcript survives a JSON round-trip');
+
+  // Transparent retrieval: every voter recovers her tracker point and reads HER own vote.
+  const choiceOf = new Map(sVoters.map((v) => [pointToHex(v.credential.pub), v.choice]));
+  let retr = 0;
+  for (const sec of secrets) {
+    const T = retrieveTracker(sec.notif, sec.trapdoorKey);
+    const row = st.trackerPoints.indexOf(pointToHex(T));
+    if (T.equals(sec.tracker) && row >= 0 && st.votes[row] === choiceOf.get(pointToHex(sec.credentialPub))) retr++;
+  }
+  check(retr === secrets.length, 'selene: every voter retrieves her tracker and reads her own vote');
+
+  // Equivocation: fabricate a fake EPHEMERAL opening pointing at any other posted row; the key is unchanged.
+  const sec0 = secrets[0]!;
+  const realRow = st.trackerPoints.indexOf(pointToHex(retrieveTracker(sec0.notif, sec0.trapdoorKey)));
+  const fakeIdx = (realRow + 1) % st.trackerPoints.length;
+  const Tprime = pointFromHex(st.trackerPoints[fakeIdx]!);
+  const aFake = fakeOpening(sec0.notif, sec0.trapdoorKey, Tprime);
+  check(retrieveTracker({ a: aFake, beta: sec0.notif.beta }, sec0.trapdoorKey).equals(Tprime), 'selene: equivocation opens the SAME notification to any chosen posted row');
+  check(retrieveTracker(sec0.notif, sec0.trapdoorKey).equals(sec0.tracker), 'selene: the trapdoor key still recovers the REAL tracker (key never repudiated)');
+  check(mul(G, sec0.trapdoorKey).equals(st.ballots.find((b) => b.credentialPub.equals(sec0.credentialPub))!.trapdoorPub), 'selene: published dual key pk = x·G is consistent with the trapdoor key');
+
+  // pointEncrypt round-trips a POINT (the tracker), recovered without discreteLog.
+  { const Tt = mul(G, 42n); const r = randScalar(); const ct = pointEncrypt(sKeys.publicKey, Tt, r);
+    check(ct.a.equals(mul(G, r)) && ct.b.subtract(mul(sKeys.publicKey, r)).equals(Tt), 'selene: pointEncrypt(PK,T,r) = (r·G, T + r·PK), recovers T = b − r·PK (no discreteLog)'); }
+
+  // Tracker↔commitment consistency unit tests.
+  { const T = mul(G, 7n); const rho = randScalar(); const d = randScalar(); const ET = pointEncrypt(sKeys.publicKey, T, rho); const Com = trackerCommit(T, d); const pr = proveTrackerConsistency(sKeys.publicKey, ET, Com, rho, d);
+    check(verifyTrackerConsistency(sKeys.publicKey, ET, Com, pr), 'selene: honest tracker-consistency proof verifies');
+    check(verifyTrackerConsistency(sKeys.publicKey, ET, trackerCommit(mul(G, 8n), d), pr) === false, 'selene: a commitment to a DIFFERENT tracker is rejected (binding)');
+    check(verifyTrackerConsistency(sKeys.publicKey, pointEncrypt(sKeys.publicKey, T, randScalar()), Com, pr) === false, 'selene: a proof transplanted to a different ciphertext is rejected (FS binds ET)');
+    check(verifyTrackerConsistency(sKeys.publicKey, ET, Com, { ...pr, zr: mod(pr.zr + 1n, N) }) === false, 'selene: tampering zr is rejected');
+    check(verifyTrackerConsistency(sKeys.publicKey, ET, Com, { ...pr, zd: N }) === false, 'selene: a non-canonical response scalar is rejected'); }
+
+  // Tamper battery on the transcript — each rejected.
+  check(verifySeleneTranscript({ ...st, votes: st.votes.map((v, i) => (i === 0 ? (v === 0 ? 1 : 0) : v)) }).ok === false, 'selene: a flipped published vote is rejected');
+  check(verifySeleneTranscript({ ...st, trackerPoints: st.trackerPoints.map((t2, i) => (i === 1 ? st.trackerPoints[0]! : t2)) }).ok === false, 'selene: duplicate tracker points are rejected (collision-freeness)');
+  check(verifySeleneTranscript({ ...st, ballots: st.ballots.map((b, i) => (i === 0 ? { ...b, trackerCommitment: trackerCommit(mul(G, 999n), 3n) } : b)) }).ok === false, 'selene: a tampered tracker commitment is rejected');
+  check(verifySeleneTranscript({ ...st, ballots: st.ballots.map((b, i) => (i === 0 ? { ...b, trackerProof: { ...b.trackerProof, zr: mod(b.trackerProof.zr + 1n, N) } } : b)) }).ok === false, 'selene: a tampered tracker-consistency proof is rejected');
+  check(verifySeleneTranscript({ ...st, results: st.results.map((r, i) => (i === 0 ? r + 1 : r)) }).ok === false, 'selene: an inflated result count is rejected');
+  // ineligible voter (roll missing one credential)
+  check(verifySeleneTranscript({ ...st, eligibleRoll: st.eligibleRoll.slice(1) }).ok === false, 'selene: a ballot from a non-rolled credential is rejected');
+  // duplicated eligible-roll entry → rejected (round-18: matches Python + the other TS verifiers, restoring dual-verifier equivalence)
+  check(verifySeleneTranscript({ ...st, eligibleRoll: [...st.eligibleRoll, st.eligibleRoll[0]!] }).ok === false, 'selene: a duplicated eligible-roll credential is rejected');
+
+  // never-throws on malformed input
+  check(noThrow(() => verifySeleneTranscript(null as unknown as SeleneTranscript).ok) === false, 'selene: verifySeleneTranscript on null is rejected without throwing');
+  check(noThrow(() => verifySeleneTranscript({ ...st, ballots: [] as unknown as typeof st.ballots, numVoters: 0 }).ok) === false, 'selene: verifySeleneTranscript on an empty ballot set is rejected without throwing');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);
