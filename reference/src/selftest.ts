@@ -56,6 +56,10 @@ import {
   transcriptToJSON, transcriptFromJSON, rankedTranscriptToJSON, rankedTranscriptFromJSON,
   mixnetIrvTranscriptToJSON, mixnetIrvTranscriptFromJSON,
 } from './transcript-json.js';
+import {
+  twShuffleProve, verifyTwShuffle, twTranscriptToJSON, twTranscriptFromJSON, verifyTwTranscript,
+  proveMul, verifyMul, generatorVector, type TwShuffleProof,
+} from './mixnet-tw.js';
 import { verifyTranscript } from './verify.js';
 
 let pass = 0;
@@ -1097,6 +1101,68 @@ for (let trial = 0; trial < 40; trial++) {
   // never-throws on malformed input
   check(noThrow(() => verifySeleneTranscript(null as unknown as SeleneTranscript).ok) === false, 'selene: verifySeleneTranscript on null is rejected without throwing');
   check(noThrow(() => verifySeleneTranscript({ ...st, ballots: [] as unknown as typeof st.ballots, numVoters: 0 }).ok) === false, 'selene: verifySeleneTranscript on an empty ballot set is rejected without throwing');
+}
+
+// 26. Terelius–Wikström O(N) proof of shuffle (ADR-0012, EXPERIMENTAL). The committed-multiplication primitive
+//     is sound; an honest shuffle verifies; every soundness attack — a non-permutation (drop/duplicate), a
+//     fabricated product-chain interior, a decoupled D, a per-component tear, tampered output/responses/
+//     announcements/endpoints, pk=identity, non-canonical scalars — is rejected; the verifier never throws.
+{
+  const noThrow = (fn: () => boolean): boolean | 'threw' => { try { return fn(); } catch { return 'threw'; } };
+  const ped = (v: bigint, r: bigint): import('./group.js').Point => mul(G, v).add(mul(H, r));
+
+  // generator vector: re-derived, distinct, none degenerate; pinned h_0
+  const hs = generatorVector(8);
+  check(pointToHex(hs[0]!) === '805862570f1accee574731ffb63f498440e324a6bb3c6860902a8e393f4c067e', 'tw: NUMS generator h_0 matches the pinned constant');
+  check(new Set(hs.map(pointToHex)).size === 8 && hs.every((h2) => !h2.equals(G) && !h2.equals(H) && !h2.equals(ZERO)), 'tw: generator vector is distinct and non-degenerate');
+
+  // committed-multiplication primitive: honest verifies; wrong product / tampered rejected
+  let mulOk = 0;
+  for (let i = 0; i < 30; i++) {
+    const a = randScalar(); const rx = randScalar(); const rz = randScalar();
+    const X = ped(a, rx); const Y = mul(G, randScalar()).add(mul(H, randScalar()));
+    const Z = mul(Y, a).add(mul(H, rz));
+    if (verifyMul(X, Y, Z, proveMul(X, Y, Z, a, rx, rz))
+      && verifyMul(X, Y, mul(Y, mod(a + 1n, N)).add(mul(H, rz)), proveMul(X, Y, Z, a, rx, rz)) === false) mulOk++;
+  }
+  check(mulOk === 30, 'tw: committed-multiplication proof is sound (honest verifies, wrong product rejected)');
+
+  // honest shuffles verify (a couple of sizes/widths)
+  const twpk = mul(G, randScalar());
+  const mkL0 = (n: number, w: number): import('./mixnet.js').Item[] => Array.from({ length: n }, (_, i) => Array.from({ length: w }, () => encrypt(twpk, BigInt(i % 3), randScalar())));
+  const L0 = mkL0(7, 2);
+  const { L, proof } = twShuffleProve(twpk, L0);
+  check(verifyTwShuffle(twpk, L0, L, proof).ok, 'tw: an honest shuffle (n=7, W=2) verifies');
+  check(verifyTwTranscript(twTranscriptFromJSON(twTranscriptToJSON(twpk, L0, L, proof))).ok, 'tw: a shuffle transcript survives a JSON round-trip');
+  { const L0b = mkL0(4, 3); const rb = twShuffleProve(twpk, L0b); check(verifyTwShuffle(twpk, L0b, rb.L, rb.proof).ok, 'tw: an honest shuffle (n=4, W=3) verifies'); }
+
+  const tamper = (mut: (p: TwShuffleProof) => TwShuffleProof, Lx: import('./mixnet.js').Item[] = L): boolean => verifyTwShuffle(twpk, L0, Lx, mut(JSON.parse(JSON.stringify(proof)))).ok;
+
+  // SOUNDNESS attacks — each must be rejected
+  // (1) non-permutation: prove a shuffle of a doctored (duplicate/drop) set, verify vs the real L0
+  { const L0doc = L0.map((it, i) => (i === 1 ? L0[0]! : it)); const rd = twShuffleProve(twpk, L0doc);
+    check(verifyTwShuffle(twpk, L0, rd.L, rd.proof).ok === false, 'tw: a shuffle of a doctored (dup/drop) set is rejected (non-permutation)'); }
+  // (2) fabricated product-chain interior
+  check(tamper((p) => { p.A[3] = p.A[4]!; return p; }) === false, 'tw: a fabricated product-chain interior (A_3) is rejected');
+  // (3) decoupled D (tampered permutation commitment)
+  check(tamper((p) => { p.c[0] = p.c[1]!; return p; }) === false, 'tw: a tampered permutation commitment (decoupled D) is rejected');
+  // (4) per-component tear: swap component-1 of two output items
+  { const torn = L.map((it) => [...it]); const tmp = torn[0]![1]!; torn[0]![1] = torn[1]![1]!; torn[1]![1] = tmp;
+    check(verifyTwShuffle(twpk, L0, torn, proof).ok === false, 'tw: a per-component tear is rejected (multi-exp binds all W to one g)'); }
+  // tampered fields
+  check(tamper((p) => { p.Gamma[2] = p.Gamma[0]!; return p; }) === false, 'tw: a tampered Γ is rejected');
+  check(tamper((p) => { p.zg[0] = mod(BigInt(p.zg[0]!) + 1n, N).toString(); return p; }) === false, 'tw: a tampered response zg is rejected');
+  check(tamper((p) => { p.zR[0] = mod(BigInt(p.zR[0]!) + 1n, N).toString(); return p; }) === false, 'tw: a tampered multi-exp response zR is rejected');
+  check(tamper((p) => { p.steps[0]!.za = mod(BigInt(p.steps[0]!.za) + 1n, N).toString(); return p; }) === false, 'tw: a tampered product-step proof is rejected');
+  check(tamper((p) => { p.s0 = mod(BigInt(p.s0) + 1n, N).toString(); return p; }) === false, 'tw: a tampered endpoint opening s0 is rejected');
+  check(tamper((p) => { p.TD = p.Gamma[0]!; return p; }) === false, 'tw: a tampered announcement TD is rejected');
+  // non-canonical scalar (hex) → reject (strict canonical-decimal parse; mirrors Python)
+  check(tamper((p) => { p.zg[0] = '0x' + BigInt(p.zg[0]!).toString(16); return p; }) === false, 'tw: a non-canonical (hex) response scalar is rejected (cross-verifier equivalence)');
+  // pk = identity → reject
+  check(verifyTwShuffle(ZERO, L0, L, proof).ok === false, 'tw: pk = identity is rejected');
+  // never-throws on malformed
+  check(noThrow(() => tamper((p) => { p.A = []; return p; })) === false, 'tw: a malformed proof (empty A) is rejected without throwing');
+  check(noThrow(() => verifyTwShuffle(twpk, L0, L, null as unknown as TwShuffleProof).ok) === false, 'tw: a null proof is rejected without throwing');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);

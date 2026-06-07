@@ -4,7 +4,7 @@
 
 ## Status — what is fixed vs open (read this first)
 
-This file accumulates **18 review rounds in reverse-chronological order**. Each round's text is preserved
+This file accumulates **19 review rounds in reverse-chronological order**. Each round's text is preserved
 verbatim *in the voice of when it was written* — so a finding described in the present tense below may have
 been **fixed in that same round**. Don't read a historical finding as a live defect; check this Status.
 
@@ -55,6 +55,17 @@ check, a TS/Python `2` vs `2.0` numeric-encoding divergence **latent across all 
 doc/over-claim items — are all fixed (a global Python int-normalizer + the missing check restore verdict
 equivalence on every document).
 
+**Terelius–Wikström O(N) shuffle (round 19) — shipped EXPERIMENTAL, NOT the default, NOT audited.** The O(N)
+proof-of-shuffle upgrade path (`mixnet-tw.ts`, [ADR-0012](ADRs/ADR-0012-terelius-wikstrom-on-shuffle-ships-experimental-not-as-default.md))
+is implemented and held to the two-verifier bar (a byte-identical Python `verify_tw_shuffle`, zero divergence
+across a 14-case tamper battery incl. the four known attack classes) + selftest §26. A pre-implementation
+design panel + soundness skeptic and a post-implementation **hard adversarial review specifically hunting a
+SwissPost-class missing-check found NO soundness gap** (4 findings, all LOW/NIT — a parse-boundary never-throws
+wrapper, an EXPERIMENTAL banner in the verdict, a barrel-comment scope — all fixed). **But cross-verification +
+in-house review is NOT an external audit** (the 2019 SwissPost break passed expert audit): so the default mix
+path stays the by-hand-checkable **Sako–Kilian cut-and-choose** (`mixnet.ts`), TW is opt-in and wired into no
+election, and production should use Verificatum. Soundness is single-instance (no `SECURITY_T` floor).
+
 **Open items are explicitly scoped, not live defects:** distributed DKG *ceremony* tooling, byte-level
 deserialization validation at a networked boundary, and production hardening — all tracked in
 [ROADMAP.md](ROADMAP.md)/[SCOPE.md](SCOPE.md) (M1/M3/M7). The eligibility/identity-binding gap flagged in the
@@ -63,6 +74,20 @@ early protocol round is itself now implemented (Belenios-style credentials + sin
 ## Verdict
 
 The core ZK/tally machinery is cryptographically sound for its stated stage-1 scope, with one genuine exception in the commitment layer. I independently re-read all of src/ and empirically reproduced the load-bearing claims against the running code (Node 24, @noble/curves 1.9.7). The three Sigma protocols are correctly built and correctly applied: the disjunctive Chaum-Pedersen 0/1 proof and the Chaum-Pedersen decryption-share proof both use strong Fiat-Shamir (the bit challenge binds h, a, and b; the decryption challenge binds G, a, pub, share, plus all commitments), so there is NO frozen-heart / weak-FS hole; the c0+c1==H(...) sub-challenge binding is the real soundness gate and it holds (an m=2 ciphertext cannot be passed off as a bit; cross-key, cross-ciphertext, and cross-trustee replays all fail). Exponential ElGamal, the additive-homomorphic fold, and additive N-of-N decryption are mathematically correct (b - Sigma a^{x_i} = g^{Sigma m}), and serializeBallot is a canonical injective fixed-width 320-byte record. The single thing that breaks the system's own stated property at PoC stage is the bulletin board's Merkle construction: it duplicates the last node on odd levels (the classic CVE-2012-2459 pattern), so [A,B,C] and [A,B,C,C] hash to an identical root (confirmed byte-identical: 570cc377...). That defeats the root's only job — uniquely committing to the ordered ballot multiset — and enables vote injection/deletion against any externally anchored root, which is the explicitly stated production design. Everything else the auditors flagged is either a defense-in-depth nicety or an EXPECTED stage-1 scope gap (no eligibility/nullifier/identity binding, N-of-N instead of k-of-n, no point/scalar validation at a not-yet-existent deserialization boundary). Bottom line: the proof math is right and the tally is honestly verifiable within scope; fix the Merkle malleability before relying on the root, and treat the missing eligibility/identity layer as the non-negotiable prerequisite before any real use.
+
+## Round 19 — Terelius–Wikström O(N) proof of shuffle (design panel + soundness skeptic + hard adversarial review): NO soundness gap; 4 LOW/NIT, all fixed
+
+Built and reviewed an O(N) Terelius–Wikström re-encryption shuffle (`reference/src/mixnet-tw.ts`, Python `verify_tw_shuffle`, [ADR-0012](ADRs/ADR-0012-terelius-wikstrom-on-shuffle-ships-experimental-not-as-default.md)) as the efficiency upgrade over the default O(t·N) Sako–Kilian cut-and-choose — the field's most soundness-treacherous primitive (the 2019 SwissPost/Scytl break was a **missing check** here that passed expert audit).
+
+A pre-implementation **design panel** (3 cryptographers) + a **soundness skeptic** chose TW over Bayer–Groth (more by-hand-checkable; smaller audit surface), specified the construction, and ruled it must ship **experimental, behind the default**, because the soundness-critical product-argument *interior* is exactly where breaks hide. Implementation decisions grounded by the panel: a NUMS generator vector re-derived by the verifier (byte-identical across `@noble`/libsodium); the permutation commitment `c` committed **before** the challenge `e` (the crux — it blocks adaptively choosing a lucky permutation after seeing `e`, since `n! ≫ N`); one combined generalized-Schnorr sharing the committed weights `g` across the commitment-consistency, the Γ openings, and the both-sides-all-W multi-exp; and a product argument `∏(gⱼ−x)=∏(eᵢ−x)` whose every step is a committed-multiplication generalized Schnorr (structurally the existing `proveConsistency`), with both endpoints and a verifier-computed target.
+
+**The post-implementation adversarial review — 4 lenses explicitly hunting a SwissPost-class missing-check soundness gap — found NONE** (4 raised, 4 confirmed, 0 refuted, **all LOW/NIT**). The reviewer confirmed: the product argument forces `{g}={e}` (both endpoints + every step bound; target verifier-computed; `x` bound after Γ); the multi-exp b-side binds the plaintext permutation under random `e`; the SAME committed `g` is used in the product argument, the D-opening, and every multi-exp component (no decoupled commitment — the SwissPost hole); `c` is bound before `e`; `D` is verifier-recomputed; the committed-multiplication proof is special-sound; and TS/Python agree equation-for-equation. The 4 fixed items:
+
+- **LOW ×2 (fixed)** — `twTranscriptFromJSON` is a *throwing parser* while `verifyTwShuffle` correctly never throws; the "never throws" guarantee was stated too broadly. Added `verifyTwTranscriptJSON` (try/catches the parse → clean verdict, like the Python `main()`), wired into the CLI, and scoped the docstring. (Not a soundness gap — a malformed transcript can never be made to VERIFY.)
+- **NIT (fixed)** — the verdict output had no EXPERIMENTAL marker; both verifiers now embed "⚠ EXPERIMENTAL / NOT AUDITED (ADR-0012)…" in the first check name, so it shows in every verification with zero divergence.
+- **NIT (fixed)** — the `index.ts` barrel comment claimed "audited protocol code"; softened to point at each module's header and flag `mixnet-tw.ts` as experimental.
+
+The earlier **cross-language divergence battery already earned its keep**: it caught a real `BigInt()` vs strict-decimal scalar-parse divergence (TS accepted hex `0x…`, Python rejected) — the same class as round 16 — fixed by routing all TW proof scalars through `scalarFromDecimal`. Net: a cross-verified, adversarially-tested experimental module with no found soundness gap, shipped honestly behind the audited-construction default, promotion gated on an external audit.
 
 ## Round 18 — Selene coercion-mitigation tracker layer (design panel + skeptic + adversarial review): 4 findings, all fixed
 

@@ -60,6 +60,7 @@ jobs:
           npm run verify -- out/rla-export.json
           npm run verify -- out/everlasting-trail.json
           npm run verify -- out/selene.json
+          npm run verify -- out/tw-shuffle.json
         working-directory: reference
       - name: Install libsodium + pysodium
         run: sudo apt-get update && sudo apt-get install -y libsodium23 && pip install pysodium
@@ -75,3 +76,5 @@ jobs:
         run: python verifier/vvp-verify-py/vvp_verify.py reference/out/everlasting-trail.json
       - name: Independently verify the Selene coercion-mitigation transcript (Python/libsodium)
         run: python verifier/vvp-verify-py/vvp_verify.py reference/out/selene.json
+      - name: Independently verify the Terelius-Wikstrom O(N) shuffle transcript (Python/libsodium)
+        run: python verifier/vvp-verify-py/vvp_verify.py reference/out/tw-shuffle.json

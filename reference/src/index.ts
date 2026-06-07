@@ -1,5 +1,6 @@
 // Public API barrel so other packages (e.g. the playground) can reuse the exact
-// same audited protocol code instead of reimplementing crypto.
+// same reference protocol code instead of reimplementing crypto. Per-module audit/experimental status
+// lives in each module's header — note `mixnet-tw.ts` is EXPERIMENTAL / NOT audited / NOT the default (ADR-0012).
 export * from './group.js';
 export * from './elgamal.js';
 export * from './proofs.js';
@@ -19,4 +20,5 @@ export * from './rla.js';
 export * from './anchorlog.js';
 export * from './everlasting.js';
 export * from './selene.js';
+export * from './mixnet-tw.js';
 export * from './transcript-json.js';
