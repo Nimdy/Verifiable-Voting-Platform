@@ -40,6 +40,9 @@ import {
   bravoBallotPolling, representativeSample, type BatchRow,
 } from './rla.js';
 import {
+  AnchorLog, verifyAnchorLog, verifyRootAnchored, rootCommitment, logHead, type AnchorEntry,
+} from './anchorlog.js';
+import {
   transcriptToJSON, transcriptFromJSON, rankedTranscriptToJSON, rankedTranscriptFromJSON,
   mixnetIrvTranscriptToJSON, mixnetIrvTranscriptFromJSON,
 } from './transcript-json.js';
@@ -798,6 +801,75 @@ for (let trial = 0; trial < 40; trial++) {
   // candidate) contradicts the reported winner → the sequential test never confirms → escalate (flip caught).
   check(bravoBallotPolling([40, 20], representativeSample([40, 20]), 0.05).confirmed, 'RLA M4: ballot-polling CONFIRMS the reported winner when the paper agrees');
   check(bravoBallotPolling([40, 20], representativeSample([20, 40]), 0.05).confirmed === false, 'RLA M4: a flipped outcome (paper contradicts the reported winner) does NOT confirm — the audit escalates (flip caught)');
+}
+
+// 23. Chain-anchor adapter (ADR-0002/0003): the signed, hash-chained transparency log of ROOT
+//     commitments is append-only, ordered, attributable, and never carries a ballot. Honest log verifies;
+//     tampering an entry / breaking the chain / reordering / dropping / a non-allowlisted validator / a
+//     case-mutated or wrong-version root / a truncated suffix is caught; the verifier never throws.
+//     NOTE: tamper checks pass { validators: allow } so the failure is attributable to the tamper itself,
+//     not to the unconditional accountability gate (which fails any log presented without an allowlist).
+{
+  const noThrow = (fn: () => boolean): boolean | 'threw' => { try { return fn(); } catch { return 'threw'; } };
+  const v1 = issueCredential(); const v2 = issueCredential();
+  const allow = [pointToHex(v1.pub), pointToHex(v2.pub)];
+  const c1 = rootCommitment('Chair', 'a'.repeat(64), '2026-06-06T00:00:00Z', 'c'.repeat(64));
+  const c2 = rootCommitment('Budget', 'b'.repeat(64), '2026-06-06T01:00:00Z');
+  const log = new AnchorLog();
+  log.append(c1, v1); log.append(c2, v2);
+  const es = log.entries();
+
+  check(verifyAnchorLog(es, { validators: allow }).ok, 'anchor log: honest log verifies (chain + named-validator signatures + allowlist)');
+  check(verifyRootAnchored(es, 'a'.repeat(64), { paperManifestRoot: 'c'.repeat(64), validators: allow }).ok, 'anchor log: the election root is found anchored in the log');
+  check(verifyRootAnchored(es, 'f'.repeat(64), { validators: allow }).ok === false, 'anchor log: a root NOT in the log is reported unanchored');
+
+  // ACCOUNTABILITY GATE (ADR-0003): a log presented with NO allowlist fails — signer identities are
+  // self-asserted, not accountable, so "no roster" must not read as "all fine".
+  check(verifyAnchorLog(es).ok === false, 'anchor log: an honest log with NO allowlist FAILS the accountability gate (self-asserted ≠ accountable)');
+
+  // tamper an entry's committed root (it is signed + hash-chained → caught two ways)
+  const tampered: AnchorEntry[] = es.map((e, i) => (i === 0 ? { ...e, commitment: { ...e.commitment, boardRoot: 'd'.repeat(64) } } : e));
+  check(verifyAnchorLog(tampered, { validators: allow }).ok === false, 'anchor log: tampering a committed root is rejected (signature + chain)');
+  // forge a signature
+  const forgedSig = es.map((e, i) => (i === 1 ? { ...e, sig: { R: e.sig.R, s: (BigInt(e.sig.s) + 1n).toString() } } : e));
+  check(verifyAnchorLog(forgedSig, { validators: allow }).ok === false, 'anchor log: a forged validator signature is rejected');
+  // break the hash-chain
+  const brokenChain = es.map((e, i) => (i === 1 ? { ...e, prev: 'e'.repeat(64) } : e));
+  check(verifyAnchorLog(brokenChain, { validators: allow }).ok === false, 'anchor log: a broken hash-chain link is rejected');
+  // reorder entries (append-only order must hold)
+  check(verifyAnchorLog([es[1]!, es[0]!], { validators: allow }).ok === false, 'anchor log: reordering entries is rejected (monotonic index + chain)');
+  // drop the genesis entry
+  check(verifyAnchorLog([es[1]!], { validators: allow }).ok === false, 'anchor log: dropping the genesis entry is rejected');
+  // CASE-MUTATION: a root presented upper/mixed-case is a different string → canonical (lowercase-only) gate rejects it.
+  const upperRoot = es.map((e, i) => (i === 0 ? { ...e, commitment: { ...e.commitment, boardRoot: 'A'.repeat(64) } } : e));
+  check(verifyAnchorLog(upperRoot, { validators: allow }).ok === false, 'anchor log: an upper/mixed-case root is rejected (canonical hex is lowercase-only)');
+  // WRONG VERSION: a commitment whose version is not vvp-root-commitment-1 fails the canonical gate (version is bound + checked).
+  const badVer = es.map((e, i) => (i === 0 ? { ...e, commitment: { ...e.commitment, version: 'vvp-root-commitment-2' as 'vvp-root-commitment-1' } } : e));
+  check(verifyAnchorLog(badVer, { validators: allow }).ok === false, 'anchor log: an unexpected commitment version is rejected (version is bound + gated)');
+  // a non-allowlisted (rogue) validator witnesses an entry, pinned to the real two → rejected
+  const rogueLog = new AnchorLog(); rogueLog.append(c1, issueCredential());
+  check(verifyAnchorLog(rogueLog.entries(), { validators: allow }).ok === false, 'anchor log: an entry signed by a non-allowlisted validator is rejected (ADR-0003)');
+
+  // TRUNCATION pins (head/length obtained out-of-band): a dropped suffix is invisible from one copy unless pinned.
+  const head = log.head();
+  check(head === logHead(es) && head.length === 64, 'anchor log: logHead(entries) equals AnchorLog.head() (running head, not a signed tree head)');
+  check(verifyAnchorLog(es, { validators: allow, expectLength: 2, expectHead: head }).ok, 'anchor log: verifies against the pinned head + length');
+  // present only the genesis entry — a valid 1-entry log on its own, but it fails the length/head pins.
+  check(verifyAnchorLog([es[0]!], { validators: allow }).ok, 'anchor log: a truncated suffix is INVISIBLE without a pin (genesis alone still verifies)');
+  check(verifyAnchorLog([es[0]!], { validators: allow, expectLength: 2 }).ok === false, 'anchor log: a truncated log is caught by the pinned length');
+  check(verifyAnchorLog([es[0]!], { validators: allow, expectHead: head }).ok === false, 'anchor log: a truncated log is caught by the pinned head');
+
+  // robustness: malformed entry rejects without throwing
+  check(noThrow(() => verifyAnchorLog(es.map((e, i) => (i === 0 ? { ...e, validatorPub: 'zz'.repeat(32) } : e)), { validators: allow }).ok) === false, 'anchor log: a malformed entry is rejected without throwing');
+  check(noThrow(() => verifyAnchorLog([]).ok) === false, 'anchor log: an empty log is rejected without throwing');
+  // verifyRootAnchored shares the never-throws contract — malformed input is a clean rejection, not an exception.
+  check(noThrow(() => verifyRootAnchored(es.map((e, i) => (i === 0 ? ({ ...e, commitment: undefined } as unknown as AnchorEntry) : e)), 'a'.repeat(64), { validators: allow }).ok) === false, 'anchor log: verifyRootAnchored on a malformed entry is rejected without throwing');
+  check(noThrow(() => verifyRootAnchored(null as unknown as AnchorEntry[], 'a'.repeat(64)).ok) === false, 'anchor log: verifyRootAnchored on a non-array is rejected without throwing');
+  // HOSTILE (round-15): an entry whose `commitment` is a THROWING accessor — optional chaining does NOT stop
+  // a getter (`e?.commitment` still invokes it for a non-null e), so BOTH verifiers must catch it, not throw.
+  const poison = { index: 0, prev: '', validatorPub: 'a'.repeat(64), sig: { R: 'a'.repeat(64), s: '1' }, get commitment() { throw new Error('boom'); } } as unknown as AnchorEntry;
+  check(noThrow(() => verifyAnchorLog([poison], { validators: allow }).ok) === false, 'anchor log: verifyAnchorLog on a throwing-getter entry is rejected without throwing');
+  check(noThrow(() => verifyRootAnchored([poison], 'a'.repeat(64), { validators: allow }).ok) === false, 'anchor log: verifyRootAnchored on a throwing-getter entry is rejected without throwing (round-15)');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);

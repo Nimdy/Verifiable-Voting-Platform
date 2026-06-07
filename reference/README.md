@@ -13,7 +13,7 @@ to **prove the thesis runs** and to serve as the executable spec the production 
 cd reference
 npm install
 npm run demo       # multi-candidate election + 8 insider attacks, all caught
-npm run selftest   # ~4,700 randomized soundness trials
+npm run selftest   # ~4,800 randomized soundness trials
 npm run verify -- out/transcript.json   # re-verify the published plurality transcript from the file ALONE
 npm run verify -- out/ranked.json       # …and the ranked-choice (Borda) transcript
 npm run typecheck
@@ -91,8 +91,9 @@ These are tracked on the [roadmap](../docs/ROADMAP.md) (M1/M3), not oversights:
 | `src/mixnet.ts` | verifiable re-encryption shuffle (Sako–Kilian cut-and-choose) — the primitive for true IRV |
 | `src/mixnet-irv.ts` | end-to-end verifiable **instant-runoff** (IRV): shuffle → threshold-decrypt → public tabulation |
 | `src/rla.ts` | paper + RLA hybrid: signed digital↔paper anchor, ballot manifest, Arlo/SHANGRLA export ([ADR-0009](../docs/ADRs/ADR-0009-the-digital-paper-anchor-binds-the-board-root-to-the-paper-bal.md)) |
+| `src/anchorlog.ts` | chain-anchor seam: signed, hash-chained transparency log of **roots only** (ADR-0002/0003) |
 | `src/verify.ts` | the independent verifier (always returns a verdict) |
 | `src/transcript-json.ts` | canonical JSON (de)serialization of a transcript (plurality **and** ranked) |
 | `src/verify-cli.ts` | standalone CLI: re-verify a plurality or ranked transcript from the public record alone |
 | `src/demo.ts` | end-to-end demo + seven insider attacks |
-| `src/selftest.ts` | randomized soundness tests (~4,500 trials) |
+| `src/selftest.ts` | randomized soundness tests (~4,800 trials) |

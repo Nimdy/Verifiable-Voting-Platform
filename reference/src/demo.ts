@@ -24,6 +24,7 @@ import {
 import { runRankedElection, verifyRankedTranscript, type RankedVoter } from './ranked.js';
 import { runMixnetElection, verifyMixnetTranscript, type MixnetVoter } from './mixnet-irv.js';
 import { makeManifest, buildAnchor, verifyAnchor, reportedResults, pollingExport, pollingExportToJSON, toArloManifestCsv, bravoSampleSize, bravoBallotPolling, representativeSample, type BatchRow } from './rla.js';
+import { AnchorLog, verifyAnchorLog, verifyRootAnchored, rootCommitment } from './anchorlog.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { verifyTranscript, type VerifyResult } from './verify.js';
 
@@ -232,6 +233,28 @@ const flipped = bravoBallotPolling(reportedTally, representativeSample([20, 40])
 console.log(`   honest  — paper agrees with the reported winner → ballot-polling CONFIRMS after ${honest.drawsExamined} sampled ballots (α=0.05).`);
 console.log(`   flipped — paper contradicts the reported winner → audit does NOT confirm (examined ${flipped.drawsExamined}) → escalate to full hand count → PAPER WINS, the flip is caught.`);
 console.log('   (illustrative BRAVO; a real deployment draws a random sample and runs VotingWorks Arlo / SHANGRLA.)\n');
+
+console.log('CHAIN ANCHOR (ADR-0002/0003) — anchor only signed ROOTS, never ballots; named validators:');
+line();
+const validatorA = issueCredential();
+const validatorB = issueCredential(); // two NAMED, accountable validators (no Proof-of-Stake — ADR-0003)
+const anchorLog = new AnchorLog();
+anchorLog.append(rootCommitment(t.contest, t.boardRoot, '2026-06-06T02:00:00Z', anchor.paperManifestRoot), validatorA);
+anchorLog.append(rootCommitment('Board chair (ranked)', rkT.boardRoot, '2026-06-06T02:05:00Z'), validatorB);
+const entries = anchorLog.entries();
+const validators = [pointToHex(validatorA.pub), pointToHex(validatorB.pub)];
+const head = anchorLog.head(); // running head a relying party pins OUT-OF-BAND (not a signed tree head)
+const logOk = verifyAnchorLog(entries, { validators, expectHead: head, expectLength: entries.length }).ok;
+const rootOk = verifyRootAnchored(entries, t.boardRoot, { paperManifestRoot: anchor.paperManifestRoot, validators }).ok;
+const tamperOk = verifyAnchorLog(entries.map((e, i) => (i === 0 ? { ...e, commitment: { ...e.commitment, boardRoot: 'd'.repeat(64) } } : e)), { validators }).ok;
+const noRosterOk = verifyAnchorLog(entries).ok; // same honest log, but no allowlist → not accountable
+const truncatedOk = verifyAnchorLog([entries[0]!], { validators, expectHead: head }).ok; // dropped suffix vs pinned head
+console.log(`   ${entries.length} root commitment(s) hash-chained + signed by 2 named validators — log valid (vs pinned head): ${logOk ? '🟢 YES' : '🔴 NO'}`);
+console.log(`   This election's roots (board ${t.boardRoot.slice(0, 12)}… + paper) anchored & found in the log: ${rootOk ? '🟢 YES' : '🔴 NO'}`);
+console.log(`   Tamper a committed root → log rejects: ${tamperOk === false ? '🟢 YES' : '🔴 NO'}`);
+console.log(`   Drop the latest entry → caught by the head pinned out-of-band: ${truncatedOk === false ? '🟢 YES' : '🔴 NO'}`);
+console.log(`   Present the log with NO validator allowlist → fails the accountability gate (self-asserted ≠ accountable): ${noRosterOk === false ? '🟢 YES' : '🔴 NO'}`);
+console.log('   ⚠ Anchoring gives tamper-evidence + ordering for the ROOT within a presented copy (the embedded time is signer-asserted, NOT verified against a trusted clock) — not fork/equivocation safety (needs gossip/witness cosigning), not trust in the tally (that is E2E-V + the verifiers), and not software independence (that is paper + RLA).\n');
 
 // Publish the transcripts so anyone can re-verify them from the public record alone.
 mkdirSync('out', { recursive: true });
