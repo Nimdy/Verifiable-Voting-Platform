@@ -8,7 +8,7 @@ import { proveBit, proveSumOne } from './proofs.js';
 import { randScalar, mod, N, type Point } from './group.js';
 import { issueCredential, sign, type Credential } from './credentials.js';
 import { Registrar, type Eligible } from './registrar.js';
-import { pointToHex } from './group.js';
+import { pointToHex, pointFromHex } from './group.js';
 import { signingBytes, boardBytes, electionContext } from './codec.js';
 import { BulletinBoard } from './bulletin.js';
 import {
@@ -26,6 +26,7 @@ import { runMixnetElection, verifyMixnetTranscript, type MixnetVoter } from './m
 import { makeManifest, buildAnchor, verifyAnchor, reportedResults, pollingExport, pollingExportToJSON, toArloManifestCsv, bravoSampleSize, bravoBallotPolling, representativeSample, type BatchRow } from './rla.js';
 import { AnchorLog, verifyAnchorLog, verifyRootAnchored, rootCommitment } from './anchorlog.js';
 import { buildTrail, verifyTrail, trailToJSON, commitVote, type EverlastingTrail } from './everlasting.js';
+import { runSeleneElection, verifySeleneTranscript, seleneTranscriptToJSON, retrieveTracker, fakeOpening, type SeleneVoter } from './selene.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { verifyTranscript, type VerifyResult } from './verify.js';
 
@@ -280,6 +281,26 @@ console.log(`   Same vote → different commitment (unconditionally hiding, even
 console.log(`   Swap a commitment for one to a different vote → consistency NIZK rejects: ${evTamperOk === false ? '🟢 YES' : '🔴 NO'}`);
 console.log('   ⚠ This is the everlasting-privacy PRIMITIVE: the commitment trail is unconditionally private, but full everlasting privacy of a DEPLOYMENT needs the commitments to be the permanent record while the ciphertexts are EPHEMERAL tally material (Cuvelier–Pereira–Peters). As published here BOTH layers appear, so this artifact is only computationally private. It is post-quantum PRIVACY of the trail, NOT post-quantum integrity. See ADR-0010.\n');
 
+console.log('SELENE TRACKERS — transparent individual verifiability + coercion-MITIGATION (ADR-0011):');
+line();
+// A small Selene election: each voter gets a private tracker; (tracker, vote) rows are shuffled + decrypted.
+const selVoters: SeleneVoter[] = packets.slice(0, 6).map((p, i) => ({ credential: p.credential, choice: [0, 1, 0, 2, 0, 1][i]! }));
+const sel = runSeleneElection('Team lunch (Selene)', CANDIDATES.slice(0, 3), selVoters, keys, eligibleRoll, [1, 3, 5]);
+const selOk = verifySeleneTranscript(sel.transcript).ok;
+// A voter privately retrieves her tracker and reads HER OWN vote off the public board — no ZK to interpret.
+const v0 = sel.secrets[0]!;
+const myTracker = retrieveTracker(v0.notif, v0.trapdoorKey);
+const myRow = sel.transcript.trackerPoints.indexOf(pointToHex(myTracker));
+const myVote = myRow >= 0 ? sel.transcript.votes[myRow]! : -1;
+// Under coercion she fabricates a FAKE opening pointing at a different row; her key x (pk = x·G) is unchanged.
+const otherRow = (myRow + 1) % sel.transcript.trackerPoints.length;
+const fakeShown = retrieveTracker({ a: fakeOpening(v0.notif, v0.trapdoorKey, pointFromHex(sel.transcript.trackerPoints[otherRow]!)), beta: v0.notif.beta }, v0.trapdoorKey);
+const equivOk = pointToHex(fakeShown) === sel.transcript.trackerPoints[otherRow];
+console.log(`   ${sel.transcript.numVoters} (tracker, vote) rows shuffled (2⁻¹²⁸) + threshold-decrypted + posted — transcript verifies: ${selOk ? '🟢 YES' : '🔴 NO'}`);
+console.log(`   A voter retrieves her tracker and reads her own vote (${CANDIDATES[myVote] ?? '?'}) off the public board — no per-voter ZK: ${myRow >= 0 ? '🟢 YES' : '🔴 NO'}`);
+console.log(`   Under coercion she shows a FAKE opening pointing at a DIFFERENT row, key pk = x·G unchanged: ${equivOk ? '🟢 YES' : '🔴 NO'}`);
+console.log('   ⚠ This is coercion-MITIGATION, NOT coercion-resistance (weaker than JCJ/Civitas). In this PoC the trapdoor key is generated in-process and tracker assignment is in-process, so the mitigation is cryptographically DEMONSTRATED but NOT operative: it needs voter-contributed keys over an untappable channel, distributed tracker assignment, and an eager coercion-free retrieval window. The full (tracker,vote) multiset is public, so a forced-instruction ("Italian") attack still works. See ADR-0011.\n');
+
 // Publish the transcripts so anyone can re-verify them from the public record alone.
 mkdirSync('out', { recursive: true });
 writeFileSync('out/transcript.json', transcriptToJSON(t));
@@ -287,12 +308,14 @@ writeFileSync('out/ranked.json', rankedTranscriptToJSON(rkT));
 writeFileSync('out/mixnet-irv.json', mixnetIrvTranscriptToJSON(irvT));
 writeFileSync('out/rla-export.json', pollingExportToJSON(rlaExport));
 writeFileSync('out/everlasting-trail.json', trailToJSON(evTrail));
+writeFileSync('out/selene.json', seleneTranscriptToJSON(sel.transcript));
 console.log('Public transcripts written to reference/out/ — verify them yourself:');
 console.log('  npm run verify -- out/transcript.json        (plurality)');
 console.log('  npm run verify -- out/ranked.json            (ranked-choice Borda)');
 console.log('  npm run verify -- out/mixnet-irv.json        (ranked-choice IRV / mixnet)');
 console.log('  npm run verify -- out/rla-export.json        (paper + RLA hybrid anchor)');
-console.log('  npm run verify -- out/everlasting-trail.json (everlasting-privacy commitment trail)\n');
+console.log('  npm run verify -- out/everlasting-trail.json (everlasting-privacy commitment trail)');
+console.log('  npm run verify -- out/selene.json            (Selene coercion-mitigation trackers)\n');
 
 line('━');
 console.log('  Summary: the honest election verifies; every insider attack is caught.');

@@ -15,6 +15,7 @@ import { verifyRankedTranscript } from './ranked.js';
 import { verifyMixnetTranscript } from './mixnet-irv.js';
 import { pollingExportFromJSON, verifyExport } from './rla.js';
 import { trailFromJSON, verifyTrail } from './everlasting.js';
+import { seleneTranscriptFromJSON, verifySeleneTranscript } from './selene.js';
 
 const path = process.argv[2];
 if (!path) {
@@ -30,11 +31,13 @@ try {
     ? verifyExport(pollingExportFromJSON(raw))
     : kind === 'everlasting-trail'
       ? verifyTrail(trailFromJSON(raw))
-      : kind === 'mixnet-irv'
-        ? verifyMixnetTranscript(mixnetIrvTranscriptFromJSON(raw))
-        : kind === 'ranked'
-          ? verifyRankedTranscript(rankedTranscriptFromJSON(raw))
-          : verifyTranscript(transcriptFromJSON(raw));
+      : kind === 'selene'
+        ? verifySeleneTranscript(seleneTranscriptFromJSON(raw))
+        : kind === 'mixnet-irv'
+          ? verifyMixnetTranscript(mixnetIrvTranscriptFromJSON(raw))
+          : kind === 'ranked'
+            ? verifyRankedTranscript(rankedTranscriptFromJSON(raw))
+            : verifyTranscript(transcriptFromJSON(raw));
 } catch (err) {
   console.error(`❌ Could not parse/verify transcript: ${String(err)}`);
   process.exit(1);

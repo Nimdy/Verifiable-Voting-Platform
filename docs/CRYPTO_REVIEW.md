@@ -4,7 +4,7 @@
 
 ## Status — what is fixed vs open (read this first)
 
-This file accumulates **17 review rounds in reverse-chronological order**. Each round's text is preserved
+This file accumulates **18 review rounds in reverse-chronological order**. Each round's text is preserved
 verbatim *in the voice of when it was written* — so a finding described in the present tense below may have
 been **fixed in that same round**. Don't read a historical finding as a live defect; check this Status.
 
@@ -41,6 +41,20 @@ non-array accept, a misleading check label) and the round-17 findings (a TS/Pyth
 asymmetry; a "self-sufficient" over-claim — resolved by *adding* the exactly-L proof rather than softening it)
 are all fixed.
 
+**Selene coercion-MITIGATION (round 18) — shipped, honestly scoped (NOT coercion-resistance).** A Selene-style
+verifiable-tracker layer (`selene.ts`, [ADR-0011](ADRs/ADR-0011-selene-verifiable-trackers-are-coercion-mitigation-not-resistance.md))
+adds transparent individual verifiability (a voter privately recovers her tracker POINT and reads her own vote
+off the public board, no per-voter ZK) + the coercion-mitigation MECHANISM (equivocate the *ephemeral opening*,
+never the key — a fake key is falsified by the published `pk = x·G`). It composes the existing Sako–Kilian
+mixnet + k-of-n threshold decryption + NUMS Pedersen `H` with **no new assumption**. It is coercion-MITIGATION,
+**not resistance** (no fake credentials; the public `(tracker,vote)` multiset leaves the forced-instruction
+"Italian" attack open), and in the PoC posture (in-process key + tracker assignment) the property is
+*demonstrated, not operative* — it needs voter-contributed keys + distributed assignment (M3+). Held to the
+two-verifier bar (TS + Python `verify_selene`); the round-18 review's 4 findings — a missing TS duplicate-roll
+check, a TS/Python `2` vs `2.0` numeric-encoding divergence **latent across all transcript kinds**, and two
+doc/over-claim items — are all fixed (a global Python int-normalizer + the missing check restore verdict
+equivalence on every document).
+
 **Open items are explicitly scoped, not live defects:** distributed DKG *ceremony* tooling, byte-level
 deserialization validation at a networked boundary, and production hardening — all tracked in
 [ROADMAP.md](ROADMAP.md)/[SCOPE.md](SCOPE.md) (M1/M3/M7). The eligibility/identity-binding gap flagged in the
@@ -49,6 +63,19 @@ early protocol round is itself now implemented (Belenios-style credentials + sin
 ## Verdict
 
 The core ZK/tally machinery is cryptographically sound for its stated stage-1 scope, with one genuine exception in the commitment layer. I independently re-read all of src/ and empirically reproduced the load-bearing claims against the running code (Node 24, @noble/curves 1.9.7). The three Sigma protocols are correctly built and correctly applied: the disjunctive Chaum-Pedersen 0/1 proof and the Chaum-Pedersen decryption-share proof both use strong Fiat-Shamir (the bit challenge binds h, a, and b; the decryption challenge binds G, a, pub, share, plus all commitments), so there is NO frozen-heart / weak-FS hole; the c0+c1==H(...) sub-challenge binding is the real soundness gate and it holds (an m=2 ciphertext cannot be passed off as a bit; cross-key, cross-ciphertext, and cross-trustee replays all fail). Exponential ElGamal, the additive-homomorphic fold, and additive N-of-N decryption are mathematically correct (b - Sigma a^{x_i} = g^{Sigma m}), and serializeBallot is a canonical injective fixed-width 320-byte record. The single thing that breaks the system's own stated property at PoC stage is the bulletin board's Merkle construction: it duplicates the last node on odd levels (the classic CVE-2012-2459 pattern), so [A,B,C] and [A,B,C,C] hash to an identical root (confirmed byte-identical: 570cc377...). That defeats the root's only job — uniquely committing to the ordered ballot multiset — and enables vote injection/deletion against any externally anchored root, which is the explicitly stated production design. Everything else the auditors flagged is either a defense-in-depth nicety or an EXPECTED stage-1 scope gap (no eligibility/nullifier/identity binding, N-of-N instead of k-of-n, no point/scalar validation at a not-yet-existent deserialization boundary). Bottom line: the proof math is right and the tally is honestly verifiable within scope; fix the Merkle malleability before relying on the root, and treat the missing eligibility/identity layer as the non-negotiable prerequisite before any real use.
+
+## Round 18 — Selene coercion-mitigation tracker layer (design panel + skeptic + adversarial review): 4 findings, all fixed
+
+Built and reviewed a Selene-style verifiable-tracker layer (`reference/src/selene.ts`, `proveTrackerConsistency` in `proofs.ts`, Python `verify_selene`, [ADR-0011](ADRs/ADR-0011-selene-verifiable-trackers-are-coercion-mitigation-not-resistance.md)). A pre-implementation **design panel** (3 cryptographers) + a **coercion-resistance skeptic** locked two decisive rulings — equivocate the *ephemeral opening* not the key (a fake key is publicly falsified by the posted dual-key `pk = x·G`), and the tracker is a group **point** (the kernel's `discreteLog` is O(max) — an integer tracker would hang) — and the honest scope (coercion-**mitigation**, not resistance; demonstrated-not-operative in the PoC posture). The construction reuses the Sako–Kilian mixnet, k-of-n threshold decryption, the NUMS Pedersen `H`, and the generalized-Schnorr/Chaum–Pedersen templates with **no new cryptographic assumption**.
+
+The crypto core survived the post-implementation **adversarial review** unbroken (the tracker↔commitment consistency proof is special-sound + HVZK via the T-cancellation trick; the (tracker,vote) shuffle+threshold-decrypt pipeline re-derives `L0` from the board, verifies all decryption proofs under quorum, recomputes the rows, and enforces tracker-point collision-freeness; the transcript leaks no secret — `x`, the notification, `ρ`, `d` are returned SEPARATELY and never published; equivocation is sound). **5 raised, 4 confirmed, all fixed; 1 NIT refuted** (Python's tracker-consistency in-range is already covered by `parse_scalar`).
+
+- **MEDIUM (fixed) — missing TS duplicate-roll check (dual-verifier divergence).** `verifySeleneTranscript` built the eligible set but never checked `eligible.size === eligibleRoll.length`, while the Python `verify_selene` (and every other TS verifier) does — so a transcript with a duplicated `eligibleRoll` entry was ACCEPTED by TS and REJECTED by Python (a real divergence on attacker-influenceable published data). **Fix:** added the check, matching the other verifiers. Regression-locked (§25).
+- **MEDIUM (fixed) — `2` vs `2.0` numeric-encoding divergence, latent across ALL transcript kinds.** TS `Number.isInteger(2.0)` is true (JS can't tell `2` from `2.0` after `JSON.parse`), but Python `isinstance(2.0, int)` is false — so a transcript with a float-encoded count (`threshold`, `numVoters`, `trustees`, `shuffleProof.t`, `trusteeIndex`, …) split the two verifiers. **Fix:** a single global Python `normalize_ints` pass coerces every integer-VALUED float to `int` right after `json.load` (a genuine non-integer like `2.5` stays a float and is rejected by BOTH), reproducing JS's behavior and restoring verdict equivalence on every document for **every** kind. (The wire format uses JSON numbers only for integer counts; scalars and points are hex strings, so this is safe.)
+- **LOW (fixed) — ADR/battery over-claim.** "10-case battery (zero divergence)" implied an equivalence broader than tested given the two gaps above. **Fix:** the divergence battery now covers duplicated-roll and float-encoded-count classes with verdict-equal in both verifiers, and the ADR/Status wording states the coverage precisely rather than implying full equivalence from a fixed small battery.
+- **NIT (addressed elsewhere)** — surfaced doc-precision items folded into the ADR honest-scope.
+
+Held to the two-verifier bar: TS + Python `verify_selene` agree on the honest transcript (results identical) and on every tamper class with **zero divergence** after the fixes; CI re-verifies `out/selene.json` in both languages; selftest §25 covers election/retrieval/equivocation/tamper/consistency-unit/dup-roll/never-throws.
 
 ## Round 17 — everlasting ballot-validity proofs on the commitment (bit-proof + exactly-L), adversarial review: 3 findings, all fixed
 

@@ -326,3 +326,46 @@ export function verifyCommitSum(sumC: Point, L: number, p: CommitSumProof): bool
   const e = hashToScalar(COMMIT_SUM_LABEL, [G, H, sumC, LG, p.A]);
   return mul(H, p.z).equals(p.A.add(mul(T, e))); // z·H == A + e·(ΣC − L·G)
 }
+
+// ---------------------------------------------------------------------------
+// 7. Selene tracker↔commitment consistency (coercion-mitigation layer, ADR-0011).
+//
+//    Proves a perfectly-hiding Pedersen commitment Com = T + d·H commits to the SAME tracker POINT T that
+//    an ElGamal ciphertext ET = (ρ·G, T + ρ·PK) encrypts under the trustees' joint key PK — WITHOUT
+//    revealing T, ρ, or d. The trick that keeps this a standard two-SCALAR proof (no point witness): the
+//    tracker T CANCELS in ET.b − Com = ρ·PK − d·H, leaving a generalized-Schnorr relation in (ρ, d):
+//        ET.a       = ρ·G
+//        ET.b − Com = ρ·PK − d·H
+//    Special-sound (extracts ρ,d from two transcripts ⇒ the two T's are equal) and HVZK (simulatable from
+//    the statement ⇒ does not weaken Com's perfect hiding). Soundness is computational (DDH/ROM), as
+//    elsewhere — this binds the everlastingly-private commitment trail of trackers to the verifiable mix.
+// ---------------------------------------------------------------------------
+
+export interface TrackerConsistencyProof {
+  A1: Point; // kρ·G
+  A2: Point; // kρ·PK − kd·H
+  zr: bigint; // kρ + e·ρ
+  zd: bigint; // kd + e·d
+}
+
+const TRACKER_CONSISTENCY_LABEL = 'selene-tracker-consistency-v1';
+
+/** Prove ET=(ρ·G, T+ρ·PK) and Com=T+d·H encode the same tracker point T. */
+export function proveTrackerConsistency(pk: Point, ET: Ciphertext, Com: Point, rho: bigint, d: bigint): TrackerConsistencyProof {
+  const kr = randScalar();
+  const kd = randScalar();
+  const A1 = mul(G, kr);
+  const A2 = mul(pk, kr).subtract(mul(H, kd));
+  const e = hashToScalar(TRACKER_CONSISTENCY_LABEL, [G, H, pk, ET.a, ET.b, Com, A1, A2]);
+  return { A1, A2, zr: mod(kr + e * rho, N), zd: mod(kd + e * d, N) };
+}
+
+/** Verify the Selene tracker↔commitment consistency proof. Recomputes the challenge; range-checks responses. */
+export function verifyTrackerConsistency(pk: Point, ET: Ciphertext, Com: Point, p: TrackerConsistencyProof): boolean {
+  if (!inRange(p.zr) || !inRange(p.zd)) return false;
+  const e = hashToScalar(TRACKER_CONSISTENCY_LABEL, [G, H, pk, ET.a, ET.b, Com, p.A1, p.A2]);
+  if (!mul(G, p.zr).equals(p.A1.add(mul(ET.a, e)))) return false; // zρ·G == A1 + e·ET.a
+  const diff = ET.b.subtract(Com); // ρ·PK − d·H iff same tracker
+  if (!mul(pk, p.zr).subtract(mul(H, p.zd)).equals(p.A2.add(mul(diff, e)))) return false; // zρ·PK − zd·H == A2 + e·(ET.b − Com)
+  return true;
+}

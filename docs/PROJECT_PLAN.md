@@ -22,7 +22,7 @@ An open, self-hostable, end-to-end-verifiable (E2E-V) voting PLATFORM whose root
 
 ## Current status
 
-**Stage-1 reference engine — feature-complete & adversarially reviewed (17 rounds, ~4,900 fuzz tests, CI green).** Lives in [`reference/`](../reference):
+**Stage-1 reference engine — feature-complete & adversarially reviewed (18 rounds, ~4,900 fuzz tests, CI green).** Lives in [`reference/`](../reference):
 
 - multi-candidate (1-of-K) ballots with a zero-knowledge "exactly one selected" proof
 - voter **eligibility** credentials + single-use nullifiers, with a **registrar that separates identity from ballot** (no single party links a person to their vote)

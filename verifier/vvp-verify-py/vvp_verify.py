@@ -9,8 +9,9 @@ either is far less likely to hide. It re-derives everything from the public reco
 alone and trusts nothing about who produced it.
 
 Handles all transcript kinds — plurality/multi-seat, ranked-choice (Borda),
-ranked-choice IRV (mixnet), the paper+RLA hybrid export (rla-export), and the
-everlasting-privacy commitment trail (everlasting-trail) — dispatching on the
+ranked-choice IRV (mixnet), the paper+RLA hybrid export (rla-export), the
+everlasting-privacy commitment trail (everlasting-trail), and the Selene
+coercion-mitigation tracker transcript (selene) — dispatching on the
 transcript's own `kind` field.
 
     python3 vvp_verify.py <transcript.json>      # exit 0 = VERIFIED, 1 = REJECTED, 2 = usage
@@ -970,6 +971,180 @@ def verify_rla_export(j):
     return all(c[1] for c in checks), checks, None
 
 
+# ---- Selene coercion-mitigation tracker layer (mirrors reference/src/selene.ts, ADR-0011) -----------
+def selene_selection_bytes(sel) -> bytes:
+    out = u32(len(sel["enc"]))
+    for jc in range(len(sel["enc"])):
+        out += sel["enc"][jc]["a"] + sel["enc"][jc]["b"] + bit_bytes(sel["bitProofs"][jc])
+    return out + sum_bytes(sel["sumProof"])
+
+
+def selene_signing_bytes(ctx: bytes, trapdoor_pub: bytes, ET, Com: bytes, sel) -> bytes:
+    return b"vvp-selene-v1" + ctx + trapdoor_pub + ET["a"] + ET["b"] + Com + selene_selection_bytes(sel)
+
+
+def selene_board_bytes(ctx: bytes, cred: bytes, trapdoor_pub: bytes, ET, Com: bytes, sel, sig) -> bytes:
+    return cred + selene_signing_bytes(ctx, trapdoor_pub, ET, Com, sel) + sig["R"] + scalar_be(sig["s"])
+
+
+def parse_tracker_proof(jp):
+    return {"A1": parse_point(jp["A1"]), "A2": parse_point(jp["A2"]),
+            "zr": parse_scalar(jp["zr"]), "zd": parse_scalar(jp["zd"])}
+
+
+def verify_tracker_consistency(pk, ET, Com, p) -> bool:
+    """ET=(rho*G, T+rho*PK) and Com=T+d*H encode the same tracker point T (T cancels in ET.b - Com)."""
+    e = hash_to_scalar("selene-tracker-consistency-v1", [G, H, pk, ET["a"], ET["b"], Com, p["A1"], p["A2"]])
+    if smul(G, p["zr"]) != padd(p["A1"], smul(ET["a"], e)):
+        return False
+    diff = psub(ET["b"], Com)
+    if psub(smul(pk, p["zr"]), smul(H, p["zd"])) != padd(p["A2"], smul(diff, e)):
+        return False
+    return True
+
+
+def verify_selene(j):
+    checks = []
+
+    def add(name, ok, detail=None):
+        checks.append((name, ok, detail))
+
+    if j.get("version") != "vvp-selene-transcript-1" or j.get("kind") != "selene":
+        add("Transcript version/kind recognized", False)
+        return False, checks, None
+    candidates = j["candidates"]
+    K = len(candidates)
+    k = j["threshold"]
+    n = len(j["ballots"])
+    W = 1 + K
+    nW = n * W
+
+    def idx_ok(i):
+        return isinstance(i, int) and not isinstance(i, bool) and 1 <= i <= j["trustees"]
+
+    shape_ok = (
+        K > 0 and isinstance(k, int) and k >= 1 and isinstance(j["trustees"], int) and j["trustees"] >= k
+        and len(j["commitments"]) == k and isinstance(j["numVoters"], int) and j["numVoters"] == n and n >= 1
+        and all(len(b["selection"]["enc"]) == K and len(b["selection"]["bitProofs"]) == K for b in j["ballots"])
+        and isinstance(j["shuffled"], list) and len(j["shuffled"]) == n and all(len(it) == W for it in j["shuffled"])
+        and isinstance(j["decShares"], list) and all(len(ds["shares"]) == nW and len(ds["proofs"]) == nW for ds in j["decShares"])
+        and isinstance(j["trackerPoints"], list) and len(j["trackerPoints"]) == n
+        and isinstance(j["votes"], list) and len(j["votes"]) == n
+        and isinstance(j["results"], list) and len(j["results"]) == K
+    )
+    add("Transcript shape: K candidates, n ballots, n items width 1+K, n*(1+K) shares", shape_ok)
+    if not shape_ok:
+        return False, checks, None
+
+    commitments = [parse_point(c) for c in j["commitments"]]
+    public_key = parse_point(j["publicKey"])
+    eligible = {parse_point(c) for c in j["eligibleRoll"]}
+    ctx = election_context(j["contest"], public_key, candidates)
+    ballots = [{
+        "credentialPub": parse_point(b["credentialPub"]),
+        "trapdoorPub": parse_point(b["trapdoorPub"]),
+        "encTracker": parse_ct(b["encTracker"]),
+        "trackerCommitment": parse_point(b["trackerCommitment"]),
+        "trackerProof": parse_tracker_proof(b["trackerProof"]),
+        "selection": parse_sel(b["selection"]),
+        "sig": {"R": parse_point(b["sig"]["R"]), "s": parse_scalar(b["sig"]["s"])},
+    } for b in j["ballots"]]
+    shuffled = [[parse_ct(c) for c in it] for it in j["shuffled"]]
+    proof = {
+        "t": j["shuffleProof"]["t"],
+        "intermediates": [[[parse_ct(c) for c in it] for it in M] for M in j["shuffleProof"]["intermediates"]],
+        "openings": [{"perm": op["perm"], "factors": [[parse_scalar(x) for x in f] for f in op["factors"]]}
+                     for op in j["shuffleProof"]["openings"]],
+    }
+    dec_shares = [{
+        "trusteeIndex": ds["trusteeIndex"],
+        "shares": [parse_point(s) for s in ds["shares"]],
+        "proofs": [parse_dec(p) for p in ds["proofs"]],
+    } for ds in j["decShares"]]
+
+    add("Joint public key = commitment C0 (threshold key)", commitments[0] == public_key)
+
+    root = mth([selene_board_bytes(ctx, b["credentialPub"], b["trapdoorPub"], b["encTracker"], b["trackerCommitment"], b["selection"], b["sig"]) for b in ballots]).hex()
+    add("Bulletin-board Merkle root matches the published ballots", root == j["boardRoot"])
+
+    add("Eligible roll has no duplicate credentials", len(eligible) == len(j["eligibleRoll"]))
+    seen = set()
+    inelig = bad_sig = dup = 0
+    for b in ballots:
+        key = b["credentialPub"]
+        if key not in eligible:
+            inelig += 1
+        if not verify_sig(b["credentialPub"], selene_signing_bytes(ctx, b["trapdoorPub"], b["encTracker"], b["trackerCommitment"], b["selection"]), b["sig"]):
+            bad_sig += 1
+        if key in seen:
+            dup += 1
+        seen.add(key)
+    add("Every ballot is signed by an eligible, non-duplicate voter credential", inelig == 0 and bad_sig == 0 and dup == 0,
+        f"{inelig} ineligible, {bad_sig} bad sig, {dup} dup" if (inelig or bad_sig or dup) else None)
+
+    vote_bad = 0
+    for b in ballots:
+        sel = b["selection"]
+        for jc in range(K):
+            if not verify_bit(public_key, sel["enc"][jc], sel["bitProofs"][jc]):
+                vote_bad += 1
+        agg = {"a": ZERO, "b": ZERO}
+        for ct in sel["enc"]:
+            agg = {"a": padd(agg["a"], ct["a"]), "b": padd(agg["b"], ct["b"])}
+        if not verify_sum_equal(public_key, agg, sel["sumProof"], 1):
+            vote_bad += 1
+    add("Every vote is a valid 1-of-K selection (bit proofs + exactly-one)", vote_bad == 0)
+
+    trk_bad = sum(0 if verify_tracker_consistency(public_key, b["encTracker"], b["trackerCommitment"], b["trackerProof"]) else 1 for b in ballots)
+    add("Every tracker commitment is bound to the same tracker its ciphertext encrypts (consistency NIZK)", trk_bad == 0)
+
+    # RE-DERIVE L0 from the validated board ballots (never trust a published L0) + verify the shuffle.
+    l0 = [[b["encTracker"]] + b["selection"]["enc"] for b in ballots]
+    add(f"Verifiable re-encryption shuffle of the (tracker, vote) pairs (Sako-Kilian, soundness 2^-{SECURITY_T})",
+        verify_shuffle(public_key, l0, shuffled, proof))
+
+    distinct = {ds["trusteeIndex"] for ds in dec_shares}
+    quorum_ok = all(idx_ok(ds["trusteeIndex"]) for ds in dec_shares) and len(distinct) == len(dec_shares) and len(distinct) >= k
+    add(f"Decryption is by >= {k} distinct registered trustees (quorum)", quorum_ok)
+
+    dec_bad = 0
+    row_mismatch = 0
+    recomputed_trackers = []
+    if quorum_ok:
+        for item in range(n):
+            for c in range(W):
+                a = shuffled[item][c]["a"]
+                for ds in dec_shares:
+                    vk = verification_key_at(commitments, ds["trusteeIndex"])
+                    if not verify_decryption(a, vk, ds["shares"][item * W + c], ds["proofs"][item * W + c]):
+                        dec_bad += 1
+            combined_t = combine_shares([(ds["trusteeIndex"], ds["shares"][item * W + 0]) for ds in dec_shares])
+            tpt = psub(shuffled[item][0]["b"], combined_t)
+            recomputed_trackers.append(tpt.hex())
+            vote = -1
+            for jc in range(K):
+                combined = combine_shares([(ds["trusteeIndex"], ds["shares"][item * W + 1 + jc]) for ds in dec_shares])
+                diff = psub(shuffled[item][1 + jc]["b"], combined)
+                bit = 0 if diff == ZERO else (1 if diff == G else -1)
+                if bit == 1:
+                    vote = jc
+                if bit == -1:
+                    row_mismatch += 1
+            if tpt.hex() != j["trackerPoints"][item] or vote != j["votes"][item]:
+                row_mismatch += 1
+    add("Every decryption share carries a valid Chaum-Pedersen proof", dec_bad == 0)
+    add("Published (tracker, vote) rows match our independent threshold decryption", row_mismatch == 0)
+
+    add("All tracker points are distinct (no two voters share a tracker)", len(set(j["trackerPoints"])) == len(j["trackerPoints"]))
+
+    tally = [sum(1 for v in j["votes"] if v == jc) for jc in range(K)]
+    tally_ok = tally == j["results"] and all(isinstance(v, int) and not isinstance(v, bool) and 0 <= v < K for v in j["votes"])
+    add("Announced results equal the count of the recovered votes", tally_ok)
+
+    ok = all(c[1] for c in checks)
+    return ok, checks, (j["results"] if ok else None)
+
+
 # ---- everlasting-privacy commitment trail (mirrors reference/src/everlasting.ts + proveConsistency) --
 def parse_consistency(j):
     # parse_scalar enforces 0 <= x < L (mirrors the TS inRange hardening on zv, zr, zd).
@@ -1087,17 +1262,36 @@ def verify_everlasting_trail(j):
     return all(c[1] for c in checks), checks, None
 
 
+def normalize_ints(o):
+    """Make Python's number handling match JS's exactly. JSON `2.0` parses to a JS Number indistinguishable
+    from `2` (Number.isInteger(2.0) is true), but Python's json parses it to a float that isinstance(int)
+    rejects. The wire format uses JSON numbers ONLY for integer counts/indices (scalars and points are hex
+    STRINGS), so coercing every integer-VALUED float to int reproduces JS's leniency, while a genuinely
+    non-integer float (e.g. 2.5) stays a float and is rejected by BOTH verifiers — restoring dual-verifier
+    verdict equivalence on every document (round-18 finding)."""
+    if isinstance(o, bool):
+        return o
+    if isinstance(o, float):
+        return int(o) if o.is_integer() else o
+    if isinstance(o, list):
+        return [normalize_ints(x) for x in o]
+    if isinstance(o, dict):
+        return {k: normalize_ints(v) for k, v in o.items()}
+    return o
+
+
 def main():
     if len(sys.argv) < 2:
         print("usage: python3 vvp_verify.py <transcript.json>", file=sys.stderr)
         sys.exit(2)
     try:
         with open(sys.argv[1]) as f:
-            data = json.load(f)
+            data = normalize_ints(json.load(f))
         # the transcript's own `kind` field selects the verifier (default: plurality).
         kind = data.get("kind")
         verifier = (verify_rla_export if kind == "rla-export"
                     else verify_everlasting_trail if kind == "everlasting-trail"
+                    else verify_selene if kind == "selene"
                     else verify_mixnet_irv if kind == "mixnet-irv"
                     else verify_ranked if kind == "ranked"
                     else verify)
