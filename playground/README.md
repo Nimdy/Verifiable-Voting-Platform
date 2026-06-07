@@ -1,6 +1,6 @@
 # Playground
 
-**🌐 Live demo (no install): https://nimdy.github.io/voting-system-blockchain/**
+**🌐 Live demo (no install): https://nimdy.github.io/Verifiable-Voting-Platform/**
 
 Or run a real **end-to-end-verifiable election in your browser** locally in ~30 seconds.
 

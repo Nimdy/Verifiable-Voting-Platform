@@ -81,7 +81,7 @@ function doIssues() {
 }
 
 console.log(`${APPLY ? '🚀 APPLYING' : '🔎 DRY RUN'} — labels, milestones, issues from backlog.json`);
-let slug = 'Nimdy/voting-system-blockchain';
+let slug = 'Nimdy/Verifiable-Voting-Platform';
 if (APPLY) { ensureGh(); slug = repoSlug(); console.log(`Repo: ${slug}`); }
 doLabels();
 doMilestones(slug);

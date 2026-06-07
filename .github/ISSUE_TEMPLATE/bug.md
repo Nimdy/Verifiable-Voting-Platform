@@ -6,7 +6,7 @@ labels: ["type:bug"]
 ---
 
 > ⚠️ If this is a **cryptographic or election-integrity** weakness, do NOT file it here.
-> Report privately: https://github.com/Nimdy/voting-system-blockchain/security/advisories/new
+> Report privately: https://github.com/Nimdy/Verifiable-Voting-Platform/security/advisories/new
 
 ## What happened
 ## What you expected

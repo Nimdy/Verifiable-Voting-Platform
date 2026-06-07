@@ -10,7 +10,7 @@ weaknesses, ways to forge or alter ballots, ways to de-anonymize a voter, ways t
 double-vote, or ways to make the tally disagree with the ballots.
 
 Report privately via a
-[GitHub Security Advisory](https://github.com/Nimdy/voting-system-blockchain/security/advisories/new).
+[GitHub Security Advisory](https://github.com/Nimdy/Verifiable-Voting-Platform/security/advisories/new).
 Include a description, affected component, and a proof-of-concept if you have one.
 
 ## Scope & honest status
