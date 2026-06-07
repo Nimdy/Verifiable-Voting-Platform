@@ -4,7 +4,7 @@
 
 ## Status — what is fixed vs open (read this first)
 
-This file accumulates **16 review rounds in reverse-chronological order**. Each round's text is preserved
+This file accumulates **17 review rounds in reverse-chronological order**. Each round's text is preserved
 verbatim *in the voice of when it was written* — so a finding described in the present tense below may have
 been **fixed in that same round**. Don't read a historical finding as a live defect; check this Status.
 
@@ -27,15 +27,19 @@ been **fixed in that same round**. Don't read a historical finding as a live def
   verifier does not check** (the seam gives order, not trusted time); and `verifyRootAnchored` now honours the
   never-throws contract even against a throwing accessor. Regression-locked by `selftest.ts` §23.
 
-**Everlasting / post-quantum PRIVACY (round 16) — primitive shipped, honestly scoped.** A perfectly-hiding
+**Everlasting / post-quantum PRIVACY (rounds 16–17) — shipped, honestly scoped.** A perfectly-hiding
 Pedersen commitment trail (`everlasting.ts`, [ADR-0010](ADRs/ADR-0010-everlasting-post-quantum-privacy-via-perfectly-hiding-pedersen.md))
 bound to each verifiable ballot by a consistency NIZK closes the harvest-now-decrypt-later privacy gap: the
 commitment trail stays private even against a future adversary who breaks the curve. It is **privacy-only**
-(integrity stays classical) and ships as the *primitive* (a fully everlasting-private *deployment* needs the
-ephemeral-ciphertext discipline + an everlasting bit/range proof on the commitment — both recorded as gates
-in ADR-0010). Held to the two-verifier bar (TS + Python, byte-identical NUMS generator) and a 15-case
-divergence battery; the round-16 review's 3 findings (a `BigInt()`/`int()` scalar-syntax divergence affecting
-**all** transcript kinds, a Python non-array `candidates` accept, and a misleading check label) are all fixed.
+(integrity stays classical). The commitment record proves **full ballot validity on its own** — an everlasting
+bit-proof on each commitment (0/1) **and** an everlasting exactly-L sum-proof on each row (no over/undervote),
+from `(G,H,{C})` with no ciphertext — so it is self-sufficient if the ciphertexts are later discarded (binary
+contests; a non-binary range proof and the ephemeral-ciphertext operational model remain, per ADR-0010). Held
+to the two-verifier bar (TS + Python, byte-identical NUMS generator) with zero cross-language divergence; the
+round-16 findings (a `BigInt()`/`int()` scalar-syntax divergence affecting **all** transcript kinds, a Python
+non-array accept, a misleading check label) and the round-17 findings (a TS/Python scalar **range**-check
+asymmetry; a "self-sufficient" over-claim — resolved by *adding* the exactly-L proof rather than softening it)
+are all fixed.
 
 **Open items are explicitly scoped, not live defects:** distributed DKG *ceremony* tooling, byte-level
 deserialization validation at a networked boundary, and production hardening — all tracked in
@@ -45,6 +49,21 @@ early protocol round is itself now implemented (Belenios-style credentials + sin
 ## Verdict
 
 The core ZK/tally machinery is cryptographically sound for its stated stage-1 scope, with one genuine exception in the commitment layer. I independently re-read all of src/ and empirically reproduced the load-bearing claims against the running code (Node 24, @noble/curves 1.9.7). The three Sigma protocols are correctly built and correctly applied: the disjunctive Chaum-Pedersen 0/1 proof and the Chaum-Pedersen decryption-share proof both use strong Fiat-Shamir (the bit challenge binds h, a, and b; the decryption challenge binds G, a, pub, share, plus all commitments), so there is NO frozen-heart / weak-FS hole; the c0+c1==H(...) sub-challenge binding is the real soundness gate and it holds (an m=2 ciphertext cannot be passed off as a bit; cross-key, cross-ciphertext, and cross-trustee replays all fail). Exponential ElGamal, the additive-homomorphic fold, and additive N-of-N decryption are mathematically correct (b - Sigma a^{x_i} = g^{Sigma m}), and serializeBallot is a canonical injective fixed-width 320-byte record. The single thing that breaks the system's own stated property at PoC stage is the bulletin board's Merkle construction: it duplicates the last node on odd levels (the classic CVE-2012-2459 pattern), so [A,B,C] and [A,B,C,C] hash to an identical root (confirmed byte-identical: 570cc377...). That defeats the root's only job — uniquely committing to the ordered ballot multiset — and enables vote injection/deletion against any externally anchored root, which is the explicitly stated production design. Everything else the auditors flagged is either a defense-in-depth nicety or an EXPECTED stage-1 scope gap (no eligibility/nullifier/identity binding, N-of-N instead of k-of-n, no point/scalar validation at a not-yet-existent deserialization boundary). Bottom line: the proof math is right and the tally is honestly verifiable within scope; fix the Merkle malleability before relying on the root, and treat the missing eligibility/identity layer as the non-negotiable prerequisite before any real use.
+
+## Round 17 — everlasting ballot-validity proofs on the commitment (bit-proof + exactly-L), adversarial review: 3 findings, all fixed
+
+Extended the everlasting layer so the commitment record proves **ballot validity on its own**, then reviewed it (3 lenses — soundness/robustness, cross-language/privacy, honesty — each finding adversarially verified). Two new proofs, both operating on `(G,H,{C})` with **no ciphertext**, both perfectly-hiding-preserving (HVZK), both computationally sound under unknown `dlog_G(H)`:
+
+- `proveCommitBit`/`verifyCommitBit` — a **disjunctive Schnorr** proving `C` commits to a bit (knowledge of `d` with `C = d·H` *or* `C − G = d·H`).
+- `proveCommitSum`/`verifyCommitSum` — a **Schnorr** proving the row sums to exactly `L` (`ΣC − L·G = D·H`). Each cell `∈ {0,1}` + row-sum `= L` ⇒ exactly-`L`, **no over/undervote**, in the everlasting view.
+
+The review **refuted** two NITs under verification (the commit-bit proof is byte-for-byte cross-language correct, and it is HVZK / does not weaken `C`'s hiding) and **confirmed 3, all fixed:**
+
+- **MEDIUM (fixed by completion) — "self-sufficient for ballot validity" over-claim.** The commit-bit proof alone covers per-candidate 0/1 bit-ness, **not** exactly-one — so in the `(a,b)`-discarded everlasting view the no-overvote constraint was lost, making "self-sufficient for ballot validity" an over-claim. **Fix:** rather than soften the wording, the **everlasting exactly-L sum-proof** (`proveCommitSum`) was added, so the claim is now *true* — the commitment record proves 0/1 **and** exactly-L. (Empirically: an overvote row that sums to 2 is rejected by the exactly-1 proof; the `L` is bound, so an exactly-1 proof does not verify as exactly-2.)
+- **LOW (fixed) — TS/Python scalar range-check asymmetry.** `scalarFromDecimal` gated only the decimal *grammar* (then `BigInt`), while Python `parse_scalar` *also* range-checked `>= L` — so the "mirrors exactly" claim was inaccurate and a future verifier relying on the parser (as Python does) could diverge. Not exploitable on the commit-bit path (the TS verifiers re-check `inRange`), but a latent equivalence hazard. **Fix:** `scalarFromDecimal` now also rejects `>= N`, so the two parsers are genuinely equivalent and no downstream verifier need re-check.
+- **NIT (fixed) — prover-side guard.** `proveCommitBit` now explicitly rejects `v ∉ {0,1}` at runtime (the type forbids it, but a JS caller could bypass).
+
+Held to the two-verifier bar: the everlasting trail now carries, per cell, `(a,b)` + bit-proof + commitment + consistency + commit-bit, and per row an exactly-L sum-proof; CI re-verifies `out/everlasting-trail.json` in TS and Python with zero divergence, and selftest §24 adds the commit-bit and exactly-L batteries (honest + every-field tamper + non-canonical scalar + transplant + the overvote-soundness case). The honest scope is unchanged: everlasting **privacy**, classical **integrity**; a non-binary range proof and the ephemeral-ciphertext deployment model remain (ADR-0010).
 
 ## Round 16 — everlasting / post-quantum privacy primitive (design panel + adversarial review): 3 findings, all fixed
 

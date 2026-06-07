@@ -977,8 +977,40 @@ def parse_consistency(j):
             "zv": parse_scalar(j["zv"]), "zr": parse_scalar(j["zr"]), "zd": parse_scalar(j["zd"])}
 
 
+def parse_commit_bit(j):
+    return {"A0": parse_point(j["A0"]), "A1": parse_point(j["A1"]),
+            "c0": parse_scalar(j["c0"]), "c1": parse_scalar(j["c1"]),
+            "s0": parse_scalar(j["s0"]), "s1": parse_scalar(j["s1"])}
+
+
 def parse_cell(j):
-    return {"ct": parse_ct(j), "bit": parse_bit(j["bit"]), "C": parse_point(j["C"]), "cons": parse_consistency(j["cons"])}
+    return {"ct": parse_ct(j), "bit": parse_bit(j["bit"]), "C": parse_point(j["C"]),
+            "cons": parse_consistency(j["cons"]), "cbit": parse_commit_bit(j["cbit"])}
+
+
+def verify_commit_bit(C, p) -> bool:
+    """Everlasting bit-proof on C alone (disjunctive Schnorr base H): C = d*H (v=0) OR C-G = d*H (v=1)."""
+    T0, T1 = C, psub(C, G)
+    e = hash_to_scalar("everlasting-commit-bit-v1", [G, H, C, p["A0"], p["A1"]])
+    if (p["c0"] + p["c1"]) % L != e:
+        return False
+    if smul(H, p["s0"]) != padd(p["A0"], smul(T0, p["c0"])):
+        return False
+    if smul(H, p["s1"]) != padd(p["A1"], smul(T1, p["c1"])):
+        return False
+    return True
+
+
+def parse_commit_sum(j):
+    return {"A": parse_point(j["A"]), "z": parse_scalar(j["z"])}
+
+
+def verify_commit_sum(sumC, sel_limit: int, p) -> bool:
+    """Everlasting exactly-L proof on the commitment row: sumC - L*G = D*H (Schnorr base H, knowledge of D=Sum d)."""
+    LG = smul(G, sel_limit)
+    T = psub(sumC, LG)  # == D*H iff sumC commits to exactly sel_limit
+    e = hash_to_scalar("everlasting-commit-sum-v1", [G, H, sumC, LG, p["A"]])
+    return smul(H, p["z"]) == padd(p["A"], smul(T, e))  # z*H == A + e*(sumC - L*G)
 
 
 def verify_consistency(pk, ct, C, p) -> bool:
@@ -1017,6 +1049,11 @@ def verify_everlasting_trail(j):
     add("Candidate set is non-empty", K > 0)
     if K == 0:
         return False, checks, None
+    L = j.get("selectionLimit")
+    l_ok = isinstance(L, int) and not isinstance(L, bool) and 1 <= L <= K
+    add(f"Selection limit L is in [1, K] (L={L})", l_ok)
+    if not l_ok:
+        return False, checks, None
     ballots = j["ballots"]
     # Require cells to be a list (mirrors TS Array.isArray(b.cells)) so a non-array cells fails at this
     # named shape check, exactly as TS does, rather than mid-parse downstream.
@@ -1026,15 +1063,26 @@ def verify_everlasting_trail(j):
         return False, checks, None
     bit_bad = 0
     cons_bad = 0
+    cbit_bad = 0
+    sum_bad = 0
     for b in ballots:
+        sumC = ZERO
         for cj in b["cells"]:
             cell = parse_cell(cj)
             if not verify_bit(pk, cell["ct"], cell["bit"]):
                 bit_bad += 1
             if not verify_consistency(pk, cell["ct"], cell["C"], cell["cons"]):
                 cons_bad += 1
+            if not verify_commit_bit(cell["C"], cell["cbit"]):
+                cbit_bad += 1
+            sumC = padd(sumC, cell["C"])
+        # everlasting exactly-L: the row's commitments sum to a commitment to L (verifier recomputes sumC).
+        if not verify_commit_sum(sumC, L, parse_commit_sum(b["sum"])):
+            sum_bad += 1
     add("Every ciphertext is proven to encrypt a bit in {0,1} (disjunctive Chaum-Pedersen)", bit_bad == 0)
     add("Every commitment is bound to the SAME vote as its ciphertext (consistency NIZK); combined with the bit-proof above, C therefore commits to a bit", cons_bad == 0)
+    add("Every commitment ALONE is proven to commit to a bit (everlasting bit-proof on C)", cbit_bad == 0)
+    add(f"Every commitment ROW is proven to sum to exactly {L} (everlasting exactly-{L} proof) - the commitment record alone proves per-candidate 0/1 AND exactly-{L} (no over/undervote), with no ciphertext", sum_bad == 0)
     add(f"Commitment trail is perfectly hiding by construction ({len(ballots) * K} commitments)", True)
     return all(c[1] for c in checks), checks, None
 

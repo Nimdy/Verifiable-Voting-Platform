@@ -34,16 +34,22 @@
 //     randomness in this system — so the commitment is *statistically* hiding with that negligible distance,
 //     i.e. perfect up to < 2^-256. (Cryptographically irrelevant; stated for honesty.)
 //   • At a CPP migration (commitments become the permanent record; (a,b) and the bit proofs are
-//     discarded) a separate EVERLASTING bit/range argument directly on C becomes MANDATORY — otherwise
-//     0/1 / no-stuffing soundness is lost in the everlasting view. Tracked in the roadmap ADR.
+//     discarded) the commitment record must STILL prove ballot validity — and it does, from (G,H,{C}) alone:
+//     an everlasting bit-proof on each C (`proveCommitBit`) proves 0/1, AND an everlasting exactly-L sum-proof
+//     on each row (`proveCommitSum`) proves no over/undervote. Both are perfectly-hiding-PRESERVING, so the
+//     trail is self-sufficient for FULL ballot validity in binary contests with no ciphertext. What remains
+//     for a full deployment: a range-proof generalization for NON-binary contests, and the operational
+//     ephemeral-ciphertext model. Soundness of these is computational (unknown dlog_G(H)) — everlasting
+//     PRIVACY, classical INTEGRITY.
 //
 // Pre-audit; not for binding government use.
 
-import { G, H, ZERO, mul, randScalar, pointToHex, pointFromHex, scalarFromDecimal, type Point } from './group.js';
+import { G, H, ZERO, N, mod, mul, randScalar, pointToHex, pointFromHex, scalarFromDecimal, type Point } from './group.js';
 import { encrypt, type Ciphertext } from './elgamal.js';
 import {
-  proveBit, verifyBit, proveConsistency, verifyConsistency,
-  type BitProof, type ConsistencyProof,
+  proveBit, verifyBit, proveConsistency, verifyConsistency, proveCommitBit, verifyCommitBit,
+  proveCommitSum, verifyCommitSum,
+  type BitProof, type ConsistencyProof, type CommitBitProof, type CommitSumProof,
 } from './proofs.js';
 import type { Check, VerifyResult } from './verify.js';
 
@@ -57,23 +63,26 @@ export function addCommitments(cs: Point[]): Point {
   return cs.reduce<Point>((acc, c) => acc.add(c), ZERO);
 }
 
-/** One per-candidate cell: verifiable ciphertext + bit proof, the perfectly-hiding commitment, and the binding proof. */
+/** One per-candidate cell: verifiable ciphertext + bit proof, the perfectly-hiding commitment, and the binding proofs. */
 export interface EverlastingCell {
   ct: Ciphertext; // (a, b) — the verifiable, decryptable, ephemeral tally material
   bitProof: BitProof; // proves the ciphertext encrypts a bit in {0,1}
   commitment: Point; // C = v·G + d·H — the PERFECTLY-HIDING permanent record
   consistency: ConsistencyProof; // binds C to the SAME v that (a,b) encrypts
+  commitBit: CommitBitProof; // proves C ALONE commits to a bit (G,H,C) — the everlasting record is self-sufficient
 }
 
-/** One ballot's everlasting row: one cell per candidate. */
+/** One ballot's everlasting row: one cell per candidate, plus the exactly-L sum proof over the row. */
 export interface EverlastingBallot {
   cells: EverlastingCell[];
+  sumProof: CommitSumProof; // proves ΣC over this row commits to exactly L (everlasting exactly-L / no over-undervote)
 }
 
 /** A self-contained, cross-verifiable everlasting-privacy trail bound to a specific election. */
 export interface EverlastingTrail {
   contest: string;
   candidates: string[];
+  selectionLimit: number; // L — how many candidates each ballot selects (1 = plurality)
   publicKey: Point; // PK — the trustees' joint key the ciphertexts encrypt under
   ballots: EverlastingBallot[];
   boardRoot?: string; // optional: the bulletin-board root this trail accompanies (self-description)
@@ -83,18 +92,21 @@ export interface EverlastingTrail {
  * Build one everlasting cell for a known vote bit v with ElGamal randomness r (both held by the voter
  * at cast time). The hiding randomness d is sampled fresh at full entropy and NEVER published.
  */
-export function buildCell(pk: Point, v: 0 | 1, r: bigint): EverlastingCell {
+export function buildCell(pk: Point, v: 0 | 1, r: bigint): { cell: EverlastingCell; d: bigint } {
   const ct = encrypt(pk, BigInt(v), r);
   const bitProof = proveBit(pk, ct, v, r);
   const d = randScalar(); // hiding randomness — kept secret; publishing it would destroy hiding
   const commitment = commitVote(v, d);
   const consistency = proveConsistency(pk, ct, commitment, v, r, d);
-  return { ct, bitProof, commitment, consistency };
+  const commitBit = proveCommitBit(commitment, v, d); // C alone commits to a bit (no ciphertext needed)
+  return { cell: { ct, bitProof, commitment, consistency, commitBit }, d };
 }
 
 /**
- * Build a trail for a set of ballots, each choosing one candidate index (plurality). Fresh ElGamal and
- * hiding randomness per cell; the voter holds the secrets, only the public cell is retained.
+ * Build a trail for a set of ballots, each choosing one candidate index (plurality, L=1). Fresh ElGamal and
+ * hiding randomness per cell; the voter holds the secrets, only the public cell is retained. Each row also
+ * carries an everlasting exactly-L sum proof so the commitment record proves no over/undervote without the
+ * ciphertext.
  */
 export function buildTrail(
   pk: Point,
@@ -104,14 +116,18 @@ export function buildTrail(
   boardRoot?: string,
 ): EverlastingTrail {
   const K = candidates.length;
+  const L = 1; // plurality
   const ballots: EverlastingBallot[] = choices.map((choice) => {
     if (!Number.isInteger(choice) || choice < 0 || choice >= K) throw new Error(`choice ${choice} out of range [0, ${K})`);
-    const cells = Array.from({ length: K }, (_, j) => buildCell(pk, (j === choice ? 1 : 0) as 0 | 1, randScalar()));
-    return { cells };
+    const built = Array.from({ length: K }, (_, j) => buildCell(pk, (j === choice ? 1 : 0) as 0 | 1, randScalar()));
+    const cells = built.map((b) => b.cell);
+    const sumC = addCommitments(cells.map((c) => c.commitment));
+    const D = built.reduce((acc, b) => mod(acc + b.d, N), 0n); // Σd over the row
+    return { cells, sumProof: proveCommitSum(sumC, L, D) };
   });
   return boardRoot === undefined
-    ? { contest, candidates, publicKey: pk, ballots }
-    : { contest, candidates, publicKey: pk, ballots, boardRoot };
+    ? { contest, candidates, selectionLimit: L, publicKey: pk, ballots }
+    : { contest, candidates, selectionLimit: L, publicKey: pk, ballots, boardRoot };
 }
 
 /**
@@ -127,7 +143,12 @@ export function verifyTrail(trail: EverlastingTrail): VerifyResult {
       return { ok: false, checks, results: null };
     }
     const K = trail.candidates.length;
+    const L = trail.selectionLimit;
     const pk = trail.publicKey;
+    if (!Number.isInteger(L) || L < 1 || L > K) {
+      checks.push({ name: `Selection limit L is in [1, K] (L=${String(L)})`, ok: false });
+      return { ok: false, checks, results: null };
+    }
 
     const shapeOk = trail.ballots.every((b) => Array.isArray(b.cells) && b.cells.length === K);
     checks.push({ name: `Every ballot has exactly one commitment per candidate (K=${K})`, ok: shapeOk });
@@ -135,14 +156,21 @@ export function verifyTrail(trail: EverlastingTrail): VerifyResult {
 
     let bitBad = 0;
     let consBad = 0;
+    let cbitBad = 0;
+    let sumBad = 0;
     for (const b of trail.ballots) {
       for (const cell of b.cells) {
         if (!verifyBit(pk, cell.ct, cell.bitProof)) bitBad++;
         if (!verifyConsistency(pk, cell.ct, cell.commitment, cell.consistency)) consBad++;
+        if (!verifyCommitBit(cell.commitment, cell.commitBit)) cbitBad++;
       }
+      // everlasting exactly-L: the row's commitments sum to a commitment to L (verifier recomputes ΣC).
+      if (!verifyCommitSum(addCommitments(b.cells.map((c) => c.commitment)), L, b.sumProof)) sumBad++;
     }
     checks.push({ name: 'Every ciphertext is proven to encrypt a bit in {0,1} (disjunctive Chaum–Pedersen)', ok: bitBad === 0 });
     checks.push({ name: 'Every commitment is bound to the SAME vote as its ciphertext (consistency NIZK); combined with the bit-proof above, C therefore commits to a bit', ok: consBad === 0 });
+    checks.push({ name: 'Every commitment ALONE is proven to commit to a bit (everlasting bit-proof on C)', ok: cbitBad === 0 });
+    checks.push({ name: `Every commitment ROW is proven to sum to exactly ${L} (everlasting exactly-${L} proof) — so the commitment record alone proves per-candidate 0/1 AND exactly-${L} (no over/undervote), with no ciphertext`, ok: sumBad === 0 });
 
     const total = trail.ballots.length * K;
     checks.push({ name: `Commitment trail is perfectly hiding by construction (C = v·G + d·H; ${total} commitments)`, ok: true });
@@ -169,6 +197,7 @@ const cellToJ = (c: EverlastingCell): unknown => ({
   },
   C: P(c.commitment),
   cons: { Aa: P(c.consistency.Aa), Ab: P(c.consistency.Ab), Ac: P(c.consistency.Ac), zv: S(c.consistency.zv), zr: S(c.consistency.zr), zd: S(c.consistency.zd) },
+  cbit: { A0: P(c.commitBit.A0), A1: P(c.commitBit.A1), c0: S(c.commitBit.c0), c1: S(c.commitBit.c1), s0: S(c.commitBit.s0), s1: S(c.commitBit.s1) },
 });
 
 const cellFromJ = (j: any): EverlastingCell => ({
@@ -179,6 +208,7 @@ const cellFromJ = (j: any): EverlastingCell => ({
   },
   commitment: p(j.C),
   consistency: { Aa: p(j.cons.Aa), Ab: p(j.cons.Ab), Ac: p(j.cons.Ac), zv: s(j.cons.zv), zr: s(j.cons.zr), zd: s(j.cons.zd) },
+  commitBit: { A0: p(j.cbit.A0), A1: p(j.cbit.A1), c0: s(j.cbit.c0), c1: s(j.cbit.c1), s0: s(j.cbit.s0), s1: s(j.cbit.s1) },
 });
 
 export function trailToJSON(t: EverlastingTrail): string {
@@ -187,9 +217,10 @@ export function trailToJSON(t: EverlastingTrail): string {
     kind: 'everlasting-trail',
     contest: t.contest,
     candidates: t.candidates,
+    selectionLimit: t.selectionLimit,
     publicKey: P(t.publicKey),
     pedersenH: P(H), // pinned NUMS generator; the verifier re-derives H and FAILS CLOSED if it differs
-    ballots: t.ballots.map((b) => ({ cells: b.cells.map(cellToJ) })),
+    ballots: t.ballots.map((b) => ({ cells: b.cells.map(cellToJ), sum: { A: P(b.sumProof.A), z: S(b.sumProof.z) } })),
   };
   if (t.boardRoot !== undefined) obj.boardRoot = t.boardRoot;
   return JSON.stringify(obj);
@@ -205,8 +236,9 @@ export function trailFromJSON(json: string): EverlastingTrail {
   const trail: EverlastingTrail = {
     contest: j.contest,
     candidates: j.candidates,
+    selectionLimit: j.selectionLimit,
     publicKey: p(j.publicKey),
-    ballots: (j.ballots as any[]).map((b) => ({ cells: (b.cells as any[]).map(cellFromJ) })),
+    ballots: (j.ballots as any[]).map((b) => ({ cells: (b.cells as any[]).map(cellFromJ), sumProof: { A: p(b.sum.A), z: s(b.sum.z) } })),
   };
   if (j.boardRoot !== undefined) trail.boardRoot = j.boardRoot;
   return trail;

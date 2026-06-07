@@ -25,7 +25,8 @@ import {
 } from './mixnet-irv.js';
 import {
   proveBit, verifyBit, proveDecryption, verifyDecryption, proveSumOne, verifySumOne,
-  proveSumEqual, verifySumEqual, proveConsistency, verifyConsistency,
+  proveSumEqual, verifySumEqual, proveConsistency, verifyConsistency, proveCommitBit, verifyCommitBit,
+  proveCommitSum, verifyCommitSum,
 } from './proofs.js';
 import { issueCredential, sign, verifySig } from './credentials.js';
 import {
@@ -935,6 +936,55 @@ for (let trial = 0; trial < 40; trial++) {
     check(verifyConsistency(pk, ct2, C, pr) === false, 'everlasting: a proof transplanted to a different ciphertext is rejected');
   }
 
+  // Everlasting bit-proof on C ALONE (the CPP-migration gate): C commits to a bit using only (G,H,C).
+  {
+    let cbHonest = 0;
+    for (let i = 0; i < 60; i++) {
+      const v: 0 | 1 = bit(); const d = randScalar();
+      const C = commitVote(v, d);
+      if (verifyCommitBit(C, proveCommitBit(C, v, d))) cbHonest++;
+    }
+    check(cbHonest === 60, 'everlasting: honest commit-bit proofs verify over random (v,d)');
+    const d = randScalar();
+    const C0 = commitVote(0, d); const C1 = commitVote(1, d);
+    const p0 = proveCommitBit(C0, 0, d); const p1 = proveCommitBit(C1, 1, d);
+    check(verifyCommitBit(C0, p0) && verifyCommitBit(C1, p1), 'everlasting: commit-bit verifies for both v=0 and v=1');
+    // transplant a proof to a different commitment → reject (FS binds C)
+    check(verifyCommitBit(C1, p0) === false, 'everlasting: a commit-bit proof transplanted to a different commitment is rejected');
+    // tamper each field → reject
+    check(verifyCommitBit(C0, { ...p0, A0: p0.A0.add(G) }) === false, 'everlasting: tampering commit-bit A0 is rejected');
+    check(verifyCommitBit(C0, { ...p0, A1: p0.A1.add(H) }) === false, 'everlasting: tampering commit-bit A1 is rejected');
+    check(verifyCommitBit(C0, { ...p0, c0: mod(p0.c0 + 1n, N) }) === false, 'everlasting: tampering commit-bit c0 is rejected');
+    check(verifyCommitBit(C0, { ...p0, s0: mod(p0.s0 + 1n, N) }) === false, 'everlasting: tampering commit-bit s0 is rejected');
+    check(verifyCommitBit(C0, { ...p0, s1: mod(p0.s1 + 1n, N) }) === false, 'everlasting: tampering commit-bit s1 is rejected');
+    // non-canonical scalar → reject (inRange)
+    check(verifyCommitBit(C0, { ...p0, c0: N }) === false, 'everlasting: a non-canonical commit-bit scalar (= N) is rejected');
+    // soundness: a commitment to a NON-bit value (2) cannot be proven a bit — neither branch's witness exists,
+    // and an honest proof built for one C does not verify against the non-bit commitment.
+    const C2 = mul(G, 2n).add(mul(H, d));
+    check(verifyCommitBit(C2, p0) === false && verifyCommitBit(C2, p1) === false, 'everlasting: a commitment to a non-bit value (2) is not accepted by a bit-proof');
+  }
+
+  // Everlasting exactly-L (sum) proof on the commitment row: ΣC commits to exactly L, from (G,H,ΣC) alone.
+  {
+    // honest: a row of bits summing to L=1 verifies; tamper rejects; the L is bound.
+    const ds = [randScalar(), randScalar(), randScalar()];
+    const row1 = [commitVote(1, ds[0]!), commitVote(0, ds[1]!), commitVote(0, ds[2]!)]; // exactly 1
+    const sum1 = addCommitments(row1); const D1 = ds.reduce((a, x) => mod(a + x, N), 0n);
+    const sp1 = proveCommitSum(sum1, 1, D1);
+    check(verifyCommitSum(sum1, 1, sp1), 'everlasting: honest exactly-1 row sum proof verifies');
+    check(verifyCommitSum(sum1, 1, { ...sp1, z: mod(sp1.z + 1n, N) }) === false, 'everlasting: tampering the sum-proof z is rejected');
+    check(verifyCommitSum(sum1, 1, { ...sp1, A: sp1.A.add(H) }) === false, 'everlasting: tampering the sum-proof A is rejected');
+    check(verifyCommitSum(sum1, 1, { ...sp1, z: N }) === false, 'everlasting: a non-canonical sum-proof scalar (= N) is rejected');
+    check(verifyCommitSum(sum1, 2, sp1) === false, 'everlasting: an exactly-1 proof does not verify as exactly-2 (L is bound)');
+    // SOUNDNESS: an OVERVOTE row (sums to 2) cannot be passed off as exactly-1 — no valid witness exists.
+    const e0 = randScalar(); const e1 = randScalar();
+    const over = [commitVote(1, e0), commitVote(1, e1)]; // two 1s
+    const sumOver = addCommitments(over); const Dover = mod(e0 + e1, N);
+    check(verifyCommitSum(sumOver, 1, proveCommitSum(sumOver, 1, Dover)) === false, 'everlasting: an overvote row (Σ=2) is rejected by the exactly-1 proof (no over/undervote in the everlasting view)');
+    check(verifyCommitSum(sumOver, 2, proveCommitSum(sumOver, 2, Dover)), 'everlasting: the same row honestly verifies as exactly-2');
+  }
+
   // Additively homomorphic: Σ commitments = (Σv)·G + (Σd)·H.
   {
     const vs: (0 | 1)[] = [1, 0, 1, 1, 0];
@@ -951,8 +1001,11 @@ for (let trial = 0; trial < 40; trial++) {
   check(verifyTrail(trailFromJSON(trailToJSON(trail))).ok, 'everlasting: a trail survives a JSON round-trip');
   check(commitmentTotals(trail).length === 3, 'everlasting: per-candidate commitment totals are produced (homomorphic tally commitment)');
   // tamper a commitment in the trail → reject
-  const tt: EverlastingTrail = { ...trail, ballots: trail.ballots.map((b, i) => (i === 0 ? { cells: b.cells.map((c, j) => (j === 0 ? { ...c, commitment: commitVote(1, randScalar()) } : c)) } : b)) };
-  check(verifyTrail(tt).ok === false, 'everlasting: a tampered trail commitment is rejected');
+  const tt: EverlastingTrail = { ...trail, ballots: trail.ballots.map((b, i) => (i === 0 ? { ...b, cells: b.cells.map((c, j) => (j === 0 ? { ...c, commitment: commitVote(1, randScalar()) } : c)) } : b)) };
+  check(verifyTrail(tt).ok === false, 'everlasting: a tampered trail commitment is rejected (consistency + commit-bit + row-sum all catch it)');
+  // tamper the row sum-proof alone → reject (everlasting exactly-L)
+  const ts2: EverlastingTrail = { ...trail, ballots: trail.ballots.map((b, i) => (i === 0 ? { ...b, sumProof: { ...b.sumProof, z: mod(b.sumProof.z + 1n, N) } } : b)) };
+  check(verifyTrail(ts2).ok === false, 'everlasting: a tampered row sum-proof is rejected');
   // a trail whose document H is wrong must fail to parse (fail closed)
   check(noThrow(() => trailFromJSON(trailToJSON(trail).replace(/"pedersenH":"[0-9a-f]{64}"/, '"pedersenH":"' + 'f'.repeat(64) + '"')) && true) === 'threw', 'everlasting: a trail with a wrong pinned H fails closed on parse');
   // strict canonical-decimal scalar parsing (round-16): the SAME-VALUE-different-syntax forms that JS
@@ -971,8 +1024,9 @@ for (let trial = 0; trial < 40; trial++) {
 
   // robustness: malformed trails are a clean rejection, not an exception
   check(noThrow(() => verifyTrail(null as unknown as EverlastingTrail).ok) === false, 'everlasting: verifyTrail on null is rejected without throwing');
-  check(noThrow(() => verifyTrail({ contest: 'x', candidates: [], publicKey: h, ballots: [] } as EverlastingTrail).ok) === false, 'everlasting: verifyTrail on an empty candidate set is rejected without throwing');
-  check(noThrow(() => verifyTrail({ ...trail, ballots: [{ cells: [] }] } as EverlastingTrail).ok) === false, 'everlasting: verifyTrail on a wrong-shape ballot is rejected without throwing');
+  check(noThrow(() => verifyTrail({ contest: 'x', candidates: [], selectionLimit: 1, publicKey: h, ballots: [] } as EverlastingTrail).ok) === false, 'everlasting: verifyTrail on an empty candidate set is rejected without throwing');
+  check(noThrow(() => verifyTrail({ ...trail, ballots: [{ cells: [] }] } as unknown as EverlastingTrail).ok) === false, 'everlasting: verifyTrail on a wrong-shape ballot is rejected without throwing');
+  check(noThrow(() => verifyTrail({ ...trail, selectionLimit: 0 } as EverlastingTrail).ok) === false, 'everlasting: verifyTrail on an out-of-range selection limit is rejected without throwing');
 }
 
 console.log(`\nself-test: ${pass} passed, ${fail} failed`);

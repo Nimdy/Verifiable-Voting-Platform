@@ -270,11 +270,12 @@ const hidingOk = !cA.equals(cB);
 const evTampered: EverlastingTrail = {
   ...evTrail,
   ballots: evTrail.ballots.map((b, i) => (i === 0
-    ? { cells: b.cells.map((c, j) => (j === 0 ? { ...c, commitment: commitVote(0, randScalar()) } : c)) }
+    ? { ...b, cells: b.cells.map((c, j) => (j === 0 ? { ...c, commitment: commitVote(0, randScalar()) } : c)) }
     : b)),
 };
 const evTamperOk = verifyTrail(evTampered).ok;
 console.log(`   ${evTrail.ballots.length * t.candidates.length} perfectly-hiding commitments, each BOUND to its verifiable ballot by a consistency NIZK — trail verifies: ${evOk ? '🟢 YES' : '🔴 NO'}`);
+console.log(`   The commitments ALONE prove full ballot validity — each a 0/1 vote (bit-proof on C) AND each row sums to exactly one (no over/undervote) — so the record stays self-sufficient even if the ciphertexts are later discarded: ${evOk ? '🟢 YES' : '🔴 NO'}`);
 console.log(`   Same vote → different commitment (unconditionally hiding, even vs a quantum adversary): ${hidingOk ? '🟢 YES' : '🔴 NO'}`);
 console.log(`   Swap a commitment for one to a different vote → consistency NIZK rejects: ${evTamperOk === false ? '🟢 YES' : '🔴 NO'}`);
 console.log('   ⚠ This is the everlasting-privacy PRIMITIVE: the commitment trail is unconditionally private, but full everlasting privacy of a DEPLOYMENT needs the commitments to be the permanent record while the ciphertexts are EPHEMERAL tally material (Cuvelier–Pereira–Peters). As published here BOTH layers appear, so this artifact is only computationally private. It is post-quantum PRIVACY of the trail, NOT post-quantum integrity. See ADR-0010.\n');

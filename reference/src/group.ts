@@ -111,7 +111,9 @@ export const inRange = (x: bigint): boolean => x >= 0n && x < N;
  */
 export function scalarFromDecimal(x: string): bigint {
   if (typeof x !== 'string' || !/^(0|[1-9][0-9]*)$/.test(x)) throw new Error('non-canonical scalar string');
-  return BigInt(x);
+  const v = BigInt(x);
+  if (v >= N) throw new Error('non-canonical scalar (>= group order)'); // range-check too, so this MIRRORS the Python parse_scalar exactly (not just the grammar) and downstream verifiers need not re-check
+  return v;
 }
 
 /** Modular exponentiation base^exp mod m. */
