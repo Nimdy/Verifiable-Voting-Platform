@@ -54,7 +54,7 @@ An open, self-hostable, end-to-end-verifiable (E2E-V) voting PLATFORM whose root
 - /home/megatron/Coding/voting-system-blockchain/docs/THREAT_MODEL.md
 - /home/megatron/Coding/voting-system-blockchain/docs/SCOPE.md
 - /home/megatron/Coding/voting-system-blockchain/docs/ADRs/ (one file per decision, 8 total)
-- /home/megatron/Coding/voting-system-blockchain/docs/CRYPTO_SPEC.md (spec only; implementation in M1)
+- /home/megatron/Coding/voting-system-blockchain/docs/CRYPTO_SPEC.md (authored: vvp-cryptospec-1 — encodings, label registry, proof transcripts, wire formats, worked example)
 - A PoC-vs-spec gap register checked into docs/
 - Updated top-level README cross-linking the above and stating the honest scope first
 
