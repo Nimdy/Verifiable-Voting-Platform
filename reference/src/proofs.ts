@@ -12,7 +12,7 @@
 //
 // Both are made non-interactive with the Fiat–Shamir transform.
 
-import { G, N, mod, mul, randScalar, hashToScalar, inRange, type Point } from './group.js';
+import { G, H, N, mod, mul, randScalar, hashToScalar, inRange, type Point } from './group.js';
 import type { Ciphertext } from './elgamal.js';
 
 // ---------------------------------------------------------------------------
@@ -168,3 +168,161 @@ export function verifySumEqual(h: Point, agg: Ciphertext, p: SumProof, L: number
 /** Exactly-one is the L=1 special case (plurality / single-choice). */
 export const proveSumOne = (h: Point, agg: Ciphertext, R: bigint): SumProof => proveSumEqual(h, agg, R, 1);
 export const verifySumOne = (h: Point, agg: Ciphertext, p: SumProof): boolean => verifySumEqual(h, agg, p, 1);
+
+// ---------------------------------------------------------------------------
+// 4. ElGamal↔Pedersen consistency (the everlasting-privacy binding).
+//
+//    Proves knowledge of (v, r, d) such that, SIMULTANEOUSLY:
+//        a = r·G                      (ElGamal: the randomness commitment)
+//        b = v·G + r·PK               (ElGamal: encrypts v under joint key PK)
+//        C = v·G + d·H                (Pedersen: perfectly-hiding commitment to v)
+//    i.e. the perfectly-hiding commitment C and the verifiable ciphertext (a,b) encode the SAME v.
+//
+//    This is a generalized-Schnorr / Maurer linear-relation proof for the homomorphism
+//    φ(v,r,d) = (r·G, v·G + r·PK, v·G + d·H). The SINGLE shared response `zv` across the b-equation
+//    and the C-equation is the entire cross-binding — it forces the same v in both. Combined with the
+//    disjunctive bit-proof on (a,b) (§1), it follows that C commits to a value in {0,1}.
+//
+//    SCOPE: this binds C to the verifiable ballot (computational soundness under unknown dlog_G(H));
+//    the everlasting/UNCONDITIONAL property is the *hiding* of C, not this proof. The proof is HVZK,
+//    so publishing it leaks nothing about (v,r,d) and does not weaken C's perfect hiding.
+// ---------------------------------------------------------------------------
+
+export interface ConsistencyProof {
+  Aa: Point; // kr·G
+  Ab: Point; // kv·G + kr·PK
+  Ac: Point; // kv·G + kd·H
+  zv: bigint; // kv + e·v   (the SHARED response — binds the same v in b and C)
+  zr: bigint; // kr + e·r
+  zd: bigint; // kd + e·d
+}
+
+const CONSISTENCY_LABEL = 'everlasting-consistency-v1';
+
+/** Prove the Pedersen commitment C = v·G + d·H commits to the same v that (a,b) encrypts under pk. */
+export function proveConsistency(pk: Point, ct: Ciphertext, C: Point, v: 0 | 1, r: bigint, d: bigint): ConsistencyProof {
+  const { a, b } = ct;
+  const kv = randScalar();
+  const kr = randScalar();
+  const kd = randScalar();
+  const Aa = mul(G, kr);
+  const Ab = mul(G, kv).add(mul(pk, kr));
+  const Ac = mul(G, kv).add(mul(H, kd));
+  const e = hashToScalar(CONSISTENCY_LABEL, [G, H, pk, a, b, C, Aa, Ab, Ac]);
+  return {
+    Aa, Ab, Ac,
+    zv: mod(kv + e * BigInt(v), N),
+    zr: mod(kr + e * r, N),
+    zd: mod(kd + e * d, N),
+  };
+}
+
+/** Verify the ElGamal↔Pedersen consistency proof. Never trusts a transmitted challenge; recomputes e. */
+export function verifyConsistency(pk: Point, ct: Ciphertext, C: Point, p: ConsistencyProof): boolean {
+  const { a, b } = ct;
+  // Reject non-canonical scalar encodings (≥ N) so the proof object is not malleable (audit hardening).
+  if (![p.zv, p.zr, p.zd].every(inRange)) return false;
+  const e = hashToScalar(CONSISTENCY_LABEL, [G, H, pk, a, b, C, p.Aa, p.Ab, p.Ac]);
+  // a = r·G            :  zr·G == Aa + e·a
+  if (!mul(G, p.zr).equals(p.Aa.add(mul(a, e)))) return false;
+  // b = v·G + r·PK     :  zv·G + zr·PK == Ab + e·b
+  if (!mul(G, p.zv).add(mul(pk, p.zr)).equals(p.Ab.add(mul(b, e)))) return false;
+  // C = v·G + d·H      :  zv·G + zd·H == Ac + e·C   (SAME zv ⇒ same v as in b)
+  if (!mul(G, p.zv).add(mul(H, p.zd)).equals(p.Ac.add(mul(C, e)))) return false;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// 5. Everlasting bit-proof on a Pedersen commitment (the CPP-migration gate).
+//
+//    Proves a commitment C = v·G + d·H commits to a BIT v ∈ {0,1}, using ONLY (G, H, C) — never the
+//    ElGamal ciphertext. So in the everlasting (commitments-only) deployment, where (a,b) and its bit-proof
+//    are discarded, the commitment record is STILL self-sufficient for ballot validity (no stuffing).
+//
+//    It is a disjunctive Schnorr (CDS OR-composition) proof of knowledge of the discrete log base H of
+//    EITHER C (case v=0: C = d·H) OR C−G (case v=1: C−G = d·H) — exactly the Pedersen randomness d. Real
+//    branch is honest, the other is simulated. Perfectly-hiding-PRESERVING (HVZK: the transcript is
+//    simulatable from C alone, so it leaks nothing about v or d and does not weaken C's perfect hiding);
+//    soundness is computational under unknown dlog_G(H) — i.e. integrity stays classical, privacy stays
+//    everlasting, consistent with ADR-0010.
+// ---------------------------------------------------------------------------
+
+export interface CommitBitProof {
+  A0: Point; A1: Point; // commitments, branch 0 (C = d·H) and branch 1 (C−G = d·H)
+  c0: bigint; c1: bigint; // sub-challenges (c0 + c1 must equal the FS challenge)
+  s0: bigint; s1: bigint; // responses
+}
+
+const COMMIT_BIT_LABEL = 'everlasting-commit-bit-v1';
+
+/** Prove the Pedersen commitment C = v·G + d·H commits to a bit, from (G,H,C) alone. */
+export function proveCommitBit(C: Point, v: 0 | 1, d: bigint): CommitBitProof {
+  if (v !== 0 && v !== 1) throw new Error('proveCommitBit: v must be 0 or 1'); // runtime guard (the type forbids it, but a JS caller could bypass)
+  const T: [Point, Point] = [C, C.subtract(G)]; // T[0] = C (v=0), T[1] = C − G (v=1); prove T[v] = d·H
+  const real = v;
+  const fake = (1 - v) as 0 | 1;
+
+  // simulate the FALSE branch: pick c_fake, s_fake, derive its commitment A_fake = s·H − c·T_fake
+  const cFake = randScalar();
+  const sFake = randScalar();
+  const AFake = mul(H, sFake).subtract(mul(T[fake], cFake));
+  // commit honestly on the TRUE branch
+  const t = randScalar();
+  const AReal = mul(H, t);
+
+  const A: Point[] = []; A[real] = AReal; A[fake] = AFake;
+  const e = hashToScalar(COMMIT_BIT_LABEL, [G, H, C, A[0]!, A[1]!]);
+  const cReal = mod(e - cFake, N);
+  const sReal = mod(t + cReal * d, N);
+
+  const c: bigint[] = []; const s: bigint[] = [];
+  c[real] = cReal; s[real] = sReal; c[fake] = cFake; s[fake] = sFake;
+  return { A0: A[0]!, A1: A[1]!, c0: c[0]!, c1: c[1]!, s0: s[0]!, s1: s[1]! };
+}
+
+/** Verify the everlasting bit-proof on a Pedersen commitment. Recomputes the challenge; never trusts it. */
+export function verifyCommitBit(C: Point, p: CommitBitProof): boolean {
+  if (![p.c0, p.c1, p.s0, p.s1].every(inRange)) return false;
+  const T0 = C;
+  const T1 = C.subtract(G);
+  const e = hashToScalar(COMMIT_BIT_LABEL, [G, H, C, p.A0, p.A1]);
+  if (mod(p.c0 + p.c1, N) !== e) return false; // the two sub-challenges must sum to the bound challenge
+  if (!mul(H, p.s0).equals(p.A0.add(mul(T0, p.c0)))) return false; // s0·H == A0 + c0·C
+  if (!mul(H, p.s1).equals(p.A1.add(mul(T1, p.c1)))) return false; // s1·H == A1 + c1·(C−G)
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// 6. Everlasting exactly-L (sum) proof on the commitment ROW.
+//
+//    Proves the homomorphic sum of a ballot's per-candidate commitments commits to exactly L (the selection
+//    limit): ΣC = L·G + D·H, i.e. knowledge of D = Σd (the summed hiding randomness) with ΣC − L·G = D·H.
+//    A plain Schnorr base H. Combined with each commitment being a BIT (proveCommitBit), this proves the
+//    everlasting record selects EXACTLY L candidates — no overvote/undervote — using ONLY (G,H,{C}), with
+//    no ciphertext. So the commitment trail proves FULL ballot validity (each cell 0/1 AND exactly-L) in the
+//    everlasting (a,b)-discarded view. HVZK (reveals nothing about D); soundness computational (unknown dlog_G(H)).
+// ---------------------------------------------------------------------------
+
+export interface CommitSumProof {
+  A: Point; // k·H
+  z: bigint; // k + e·D
+}
+
+const COMMIT_SUM_LABEL = 'everlasting-commit-sum-v1';
+
+/** Prove ΣC commits to exactly L: knowledge of D = Σd with ΣC − L·G = D·H. */
+export function proveCommitSum(sumC: Point, L: number, D: bigint): CommitSumProof {
+  const k = randScalar();
+  const A = mul(H, k);
+  const e = hashToScalar(COMMIT_SUM_LABEL, [G, H, sumC, mul(G, BigInt(L)), A]);
+  return { A, z: mod(k + e * D, N) };
+}
+
+/** Verify the everlasting exactly-L sum proof on the commitment row. Recomputes the challenge. */
+export function verifyCommitSum(sumC: Point, L: number, p: CommitSumProof): boolean {
+  if (!inRange(p.z)) return false;
+  const LG = mul(G, BigInt(L));
+  const T = sumC.subtract(LG); // == D·H iff ΣC commits to exactly L
+  const e = hashToScalar(COMMIT_SUM_LABEL, [G, H, sumC, LG, p.A]);
+  return mul(H, p.z).equals(p.A.add(mul(T, e))); // z·H == A + e·(ΣC − L·G)
+}

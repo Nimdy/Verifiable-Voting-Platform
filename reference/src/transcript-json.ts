@@ -11,7 +11,7 @@
 // version `vvp-transcript-1`), ranked-choice Borda (`RankedTranscript`, `vvp-ranked-transcript-1`),
 // and mixnet instant-runoff (`MixnetIrvTranscript`, `vvp-mixnet-irv-transcript-1`).
 
-import { pointToHex, pointFromHex } from './group.js';
+import { pointToHex, pointFromHex, scalarFromDecimal } from './group.js';
 import type { Transcript, Selection } from './election.js';
 import type { RankedTranscript, RankedBallot } from './ranked.js';
 import type { Ciphertext } from './elgamal.js';
@@ -24,7 +24,7 @@ import type { MixnetIrvTranscript, MixnetDecShare } from './mixnet-irv.js';
 const P = pointToHex;
 const p = pointFromHex;
 const S = (x: bigint): string => x.toString();
-const s = (x: string): bigint => BigInt(x);
+const s = scalarFromDecimal; // strict canonical-decimal parse (cross-verifier equivalence — see group.ts)
 
 // --- shared element encoders (one source of truth for every group element) ---
 const ctToJ = (c: Ciphertext): unknown => ({ a: P(c.a), b: P(c.b) });

@@ -20,6 +20,27 @@ export const G: Point = RistrettoPoint.BASE;
 /** Group identity element (0 in additive notation). */
 export const ZERO: Point = RistrettoPoint.BASE.subtract(RistrettoPoint.BASE);
 
+// --- Second, independent generator H for Pedersen commitments (everlasting privacy) ---------------
+//
+// H is a NOTHING-UP-MY-SLEEVE generator: it is the ristretto255 one-way map (RFC 9496 `from_hash`,
+// i.e. @noble's `hashToCurve`) applied to SHA-512 of a fixed label, so NOBODY knows its discrete log
+// base G. That unknown dlog is exactly what makes a Pedersen commitment C = v·G + d·H *binding*
+// (computationally) while d·H makes it *perfectly hiding* (unconditionally). If anyone knew dlog_G(H),
+// binding would collapse — hence the NUMS derivation, the pinned self-check below (fail closed), and
+// the byte-identical derivation in the independent Python verifier (which uses libsodium's
+// `crypto_core_ristretto255_from_hash` over the same SHA-512 digest). NOTE: this is the RFC 9496
+// one-way map over a 64-byte digest, NOT RFC 9380 hash-to-curve (which libsodium does not expose).
+export const PEDERSEN_H_LABEL = 'vvp-everlasting-pedersen-H-v1';
+const PEDERSEN_H_HEX = 'b66dc28b63ecfbb83fa33aad8148a54f17757fce571ad6b8df258d3cfa2a777a';
+export const H: Point = RistrettoPoint.hashToCurve(sha512(utf8ToBytes(PEDERSEN_H_LABEL)));
+// Fail closed: a wrong/backdoored H (known dlog) would silently break commitment binding.
+if (bytesToHex(H.toRawBytes()) !== PEDERSEN_H_HEX) {
+  throw new Error('group: Pedersen generator H does not match the pinned NUMS constant');
+}
+if (H.equals(G) || H.equals(ZERO)) {
+  throw new Error('group: Pedersen generator H must differ from G and the identity');
+}
+
 /** Reduce a (possibly negative) integer into [0, m). */
 export const mod = (a: bigint, m: bigint = N): bigint => ((a % m) + m) % m;
 
@@ -79,6 +100,21 @@ export function hashToScalar(label: string, points: Point[]): bigint {
 
 /** Canonical scalar range check — rejects non-canonical (≥ N) encodings. */
 export const inRange = (x: bigint): boolean => x >= 0n && x < N;
+
+/**
+ * Parse a scalar from its canonical DECIMAL string form. `BigInt(x)` is too permissive — it also accepts
+ * `0x..`/`0o..`/`0b..` prefixes, the empty string, signs, and surrounding whitespace — and Python's `int()`
+ * is permissive in a DIFFERENT way (underscores, Unicode digits), so relying on each language's native
+ * constructor lets one rewrite a scalar into a same-value-different-syntax form that one independent verifier
+ * accepts and the other rejects (a dual-verifier equivalence break). Both verifiers gate on this exact
+ * canonical decimal grammar before converting, so a non-canonical string is a clean rejection in BOTH.
+ */
+export function scalarFromDecimal(x: string): bigint {
+  if (typeof x !== 'string' || !/^(0|[1-9][0-9]*)$/.test(x)) throw new Error('non-canonical scalar string');
+  const v = BigInt(x);
+  if (v >= N) throw new Error('non-canonical scalar (>= group order)'); // range-check too, so this MIRRORS the Python parse_scalar exactly (not just the grammar) and downstream verifiers need not re-check
+  return v;
+}
 
 /** Modular exponentiation base^exp mod m. */
 export function modPow(base: bigint, exp: bigint, m: bigint = N): bigint {

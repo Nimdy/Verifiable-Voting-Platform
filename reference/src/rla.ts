@@ -26,7 +26,7 @@
 // ceremony are off-system / represented.
 
 import { concatBytes, utf8ToBytes, hexToBytes } from '@noble/hashes/utils';
-import { pointToHex, pointFromHex, type Point } from './group.js';
+import { pointToHex, pointFromHex, scalarFromDecimal, type Point } from './group.js';
 import { sign, verifySig, type Credential } from './credentials.js';
 import { BulletinBoard } from './bulletin.js';
 import type { Check, VerifyResult } from './verify.js';
@@ -163,7 +163,7 @@ export function verifyAnchor(
     checks.push({ name: 'Anchor fields are canonically encoded (32-byte roots/keys, uint32 counts)', ok: canon });
     if (!canon) return { ok: false, checks, results: null };
 
-    const sigOk = verifySig(pointFromHex(anchor.signerPub), anchorBytes(anchor), { R: pointFromHex(anchor.sig.R), s: BigInt(anchor.sig.s) });
+    const sigOk = verifySig(pointFromHex(anchor.signerPub), anchorBytes(anchor), { R: pointFromHex(anchor.sig.R), s: scalarFromDecimal(anchor.sig.s) });
     checks.push({ name: 'Anchor self-signature is valid (over all bound fields, incl. the signer key)', ok: sigOk });
     if (expect?.signerPub !== undefined) {
       checks.push({ name: 'Anchor is signed by the PINNED election-authority key', ok: anchor.signerPub === expect.signerPub });
