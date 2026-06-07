@@ -53,12 +53,11 @@ overwhelming majority of this is **not built yet**.
 > no `turbo.json`. The repo is three independent pieces: `reference/` (TS) + `playground/`
 > (TS) + `verifier/` (Python).
 
-> **There is NO `docs/CRYPTO_SPEC.md`.** Multiple ADRs and the README reference it as the
-> pinned wire-format contract, but the file **does not exist**. The canonical encodings
-> *are* implemented and cross-verified in code (`reference/src/codec.ts`,
-> `transcript-json.ts`, `proofs.ts`, `bulletin.ts`), but the written specification document
-> has not been authored. This is a real gap for a system that claims independent
-> verifiability.
+> **`docs/CRYPTO_SPEC.md` now exists** (`vvp-cryptospec-1`, authored 2026-06-07). It pins every
+> encoding, the full domain-separation label registry, all sigma-proof transcripts, the per-kind
+> JSON wire formats, and a worked example with real expected hashes — the contract both the
+> TypeScript and Python verifiers implement against (ADR-0006). This was previously the single
+> biggest gap for a system claiming independent verifiability; it closed #11.
 
 > **The crypto is reference-grade TypeScript, not production crypto.** It is trustworthy
 > *as a specification and a correctness oracle*. It has **not** had external review and is
@@ -78,7 +77,7 @@ Status legend:
 
 | Milestone | done | reference-done | partial | not-started |
 |-----------|:----:|:--------------:|:-------:|:-----------:|
-| M0 — foundations / ADRs / CI | 10 | 0 | 2 | 2 |
+| M0 — foundations / ADRs / CI | 11 | 0 | 1 | 2 |
 | M1 — Rust vvp-crypto core | 0 | 7 | 2 | 3 |
 | M2 — kernel + typed ports + boards | 0 | 4 | 0 | 3 |
 | M3 — registrar / casting / voter app | 0 | 5 | 2 | 4 |
@@ -87,7 +86,7 @@ Status legend:
 | M6 — anchors / coercion / adversary lab | 0 | 2 | 1 | 5 |
 | M7 — review / pilot / release | 0 | 0 | 0 | 6 |
 | (unmilestoned) | 1 | 0 | 0 | 0 |
-| **Total** | **11** | **19** | **10** | **27** |
+| **Total** | **12** | **19** | **9** | **27** |
 
 > **Reconciliation actions taken 2026-06-07.** Before this pass the tracker showed **67 open / 0 closed**
 > across all milestones — which badly understated real progress. This pass: the 10 M0 deliverables
@@ -95,7 +94,7 @@ Status legend:
 > 10 **`status:partial`**; #23 and #44 were re-classified from *done* to **partial** and kept open (their
 > adversarial close-check found unmet acceptance criteria); and #65 was fixed in the same PR that adds this
 > document. "done" below means the named deliverable exists; a closed issue is one whose done-ness was
-> additionally confirmed by an adversarial skeptic.
+> additionally confirmed by an adversarial skeptic. A follow-up PR authored `docs/CRYPTO_SPEC.md`, closing **#11** (the keystone gap) and clearing one of #23's blockers.
 
 ### M0 — Foundations, ADRs, CI
 
@@ -111,7 +110,7 @@ Status legend:
 | 8 | ADR-0006: independent verifier in a different language/team | done | ADR Accepted + Python verifier real; but the ADR's named CRYPTO_SPEC.md/Rust core/ElectionGuard cross-check do NOT yet exist |
 | 9 | ADR-0007: ristretto255 + exponential ElGamal per ElectionGuard 2.x | done | Accepted; approved-crates list, no hand-rolled ciphers (closed; skeptic rate-limited, manually confirmed) |
 | 10 | ADR-0008: receipt-freeness (no transferable proof of vote) | done | Accepted; MAY-keep vs MUST-NOT split |
-| 11 | Define canonical transcript schema (CRYPTO_SPEC.md + types) | partial | Encodings implemented + cross-verified in code; **CRYPTO_SPEC.md doc absent** |
+| 11 | Define canonical transcript schema (CRYPTO_SPEC.md + types) | done | docs/CRYPTO_SPEC.md authored (`vvp-cryptospec-1`): encodings, full label registry, all proof transcripts, per-kind wire formats, worked-example vectors; transcript types in code |
 | 12 | Stand up the monorepo (pnpm+Turborepo + Cargo workspace) | not-started | No workspace/Cargo/packages exist — fresh start |
 | 13 | CI: typecheck + reference selftest on every PR | partial | CI live + cross-verify; only missing the README status badge |
 | 14 | Document and lock the M0 open questions before crypto work | not-started | No consolidated open-questions register exists |
@@ -128,7 +127,7 @@ Status legend:
 | 20 | Benaloh cast-or-challenge primitive in Rust/WASM | reference-done | In `session.ts`; no Rust/WASM |
 | 21 | Nullifier derivation + spent-set semantics in Rust | reference-done | In `credentials.ts` + Python verifier; no Rust |
 | 22 | Compile vvp-crypto to WASM with typed JS/TS binding | not-started | Downstream of #15; nothing to compile |
-| 23 | Build the independent Python reference verifier | partial | Real, runs in CI across 7 kinds; remaining: depends on the missing CRYPTO_SPEC.md (#11), no Python negative-fixture tests for the 4 named attacks, no ElectionGuard (#24) |
+| 23 | Build the independent Python reference verifier | partial | Real, runs in CI across 7 kinds; CRYPTO_SPEC.md dependency (#11) now resolved; remaining: no Python negative-fixture tests for the 4 named attacks, no ElectionGuard (#24) |
 | 24 | Cross-verify under Rust core, Python, AND ElectionGuard | partial | Real TS↔Python cross-check; Rust core + ElectionGuard interop absent |
 | 25 | Generate/publish ElectionGuard-compatible test vectors | not-started | No vectors; ElectionGuard is prose-only influence |
 | 26 | Fuzzing/property tests for proof soundness in Rust | not-started | No Rust, no fuzz/property harness in any language |
@@ -285,9 +284,9 @@ Ordered, honest next steps. Features can never substitute for the trust steps in
 3. **#27–#33 — build the kernel + five typed ports**: ElectionManifest (Zod), the five port
    interfaces, the XState orchestrator, the in-memory + postgres-log board adapters, the
    conformance suite, culminating in the M2 DoD (byte-identical run across boards).
-4. **Also: author `docs/CRYPTO_SPEC.md`** (#11). The encodings already exist in code, but the
-   written contract that independent verifiers implement against is missing and is referenced
-   as load-bearing by several ADRs.
+4. ~~**Author `docs/CRYPTO_SPEC.md`** (#11)~~ — **DONE** (`vvp-cryptospec-1`). The written contract
+   independent verifiers implement against now exists; it also removes one of #23's blockers and is
+   the reference for the Rust port (#15–#19).
 
 ### (iii) Trust steps that no feature can substitute for
 
