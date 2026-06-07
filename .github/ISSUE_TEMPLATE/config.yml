@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: 🔒 Report a security vulnerability (private)
-    url: https://github.com/Nimdy/voting-system-blockchain/security/advisories/new
+    url: https://github.com/Nimdy/Verifiable-Voting-Platform/security/advisories/new
     about: Cryptographic or election-integrity issues must be reported privately, never as a public issue. See SECURITY.md.
   - name: 📋 Roadmap & milestones
-    url: https://github.com/Nimdy/voting-system-blockchain/blob/main/docs/ROADMAP.md
+    url: https://github.com/Nimdy/Verifiable-Voting-Platform/blob/main/docs/ROADMAP.md
     about: See where the project is headed before opening a task.

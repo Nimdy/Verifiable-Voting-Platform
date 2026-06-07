@@ -5,9 +5,11 @@
 > DAO/governance, and community voting. A blockchain is supported as **one optional, swappable
 > bulletin-board / settlement adapter**, never as the thing you have to trust.
 
+**📊 Where this actually stands → [docs/STATUS.md](docs/STATUS.md)** — an honest, milestone-by-milestone reconciliation of what exists today (the TypeScript reference PoC) vs. the production roadmap.
+
 ## ▶️ Try it
 
-**🌐 Live, no install → https://nimdy.github.io/voting-system-blockchain/**
+**🌐 Live, no install → https://nimdy.github.io/Verifiable-Voting-Platform/**
 
 Or run it locally:
 
@@ -222,7 +224,7 @@ Pick a profile in the manifest; it's a preset of adapter + parameter choices.
 Monorepo: pnpm + Turborepo (TypeScript) alongside a Cargo workspace (Rust).
 
 ```
-voting-system-blockchain/
+Verifiable-Voting-Platform/
 ├── README.md                      # this file
 ├── docs/
 │   ├── ORIGINAL_CONCEPT.md        # the preserved 2014 concept

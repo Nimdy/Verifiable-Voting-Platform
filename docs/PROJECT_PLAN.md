@@ -34,9 +34,9 @@ An open, self-hostable, end-to-end-verifiable (E2E-V) voting PLATFORM whose root
 - **publish-and-reverify**: a canonical `transcript.json` re-checked from the public record alone
 - a **second, independent verifier** in Python on libsodium — cross-checked against the TypeScript verifier in CI on every push
 
-Plus a **live in-browser app** (https://nimdy.github.io/voting-system-blockchain/) with three views — 🎮 Playground, 🔬 How-it-works walkthrough, and 🗂️ Drill-down ballot — 59 tracked issues, and three green CI workflows.
+Plus a **live in-browser app** (https://nimdy.github.io/Verifiable-Voting-Platform/) with three views — 🎮 Playground, 🔬 How-it-works walkthrough, and 🗂️ Drill-down ballot — 59 tracked issues, and three green CI workflows.
 
-**Next:** networked services (registrar / casting / coordinator), the production Rust core (M1), the [interactive lifecycle dashboard](https://github.com/Nimdy/voting-system-blockchain/issues/58), and ranked-choice ballots. See the [Roadmap](ROADMAP.md).
+**Next:** networked services (registrar / casting / coordinator), the production Rust core (M1), the [interactive lifecycle dashboard](https://github.com/Nimdy/Verifiable-Voting-Platform/issues/58), and ranked-choice ballots. See the [Roadmap](ROADMAP.md).
 
 ## Planning artifacts
 
