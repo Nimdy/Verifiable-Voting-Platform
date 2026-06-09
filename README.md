@@ -109,13 +109,13 @@ anyone to deploy" means: you pick adapters and parameters in a declarative `Elec
 the same protocol runs unchanged.
 
 ```
-                          ┌───────────────────────────────────────────────┐
+                          ┌─────────────────────────────────────────────────┐
                           │              Protocol Kernel                    │
                           │   ElectionManifest (Zod)  +  phase orchestrator │
-                          └───────────────────────────────────────────────┘
+                          └─────────────────────────────────────────────────┘
         ┌──────────────┬───────────────┬───────────────┬──────────────┬───────────────┐
         ▼              ▼               ▼               ▼              ▼               ▼
- ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
+ ┌──────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
  │ Identity     │ │ Anonymity   │ │ Tallying    │ │ Bulletin    │ │ Auditor /   │ │ (optional)  │
  │ Provider     │ │ Layer       │ │ Scheme      │ │ Board       │ │ Verifier    │ │ Vote        │
  │              │ │             │ │             │ │ (the chain- │ │             │ │ Transport   │
@@ -123,7 +123,7 @@ the same protocol runs unchanged.
  │ OIDC /       │ │ creds /     │ │ ElGamal /   │ │ seam)       │ │ re-check in │ │ settlement) │
  │ Semaphore /  │ │ mixnet /    │ │ threshold   │ │             │ │ a different │ │             │
  │ JCJ creds    │ │ MACI/Selene │ │ decryption  │ │             │ │ language    │ │             │
- └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘
+ └──────────────┘ └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘
 ```
 
 ### The chain-pluggable seam (`BulletinBoard` port)
